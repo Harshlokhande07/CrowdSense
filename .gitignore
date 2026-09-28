@@ -1,0 +1,32 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environment variables & secrets
+.env
+*.json
+!package.json
+!vercel.json
+service_account*.json
+firebase_key*.json
+
+# YOLO model weights (if large)
+*.pt
+!yolov8n.pt
+
+# IDEs
+.idea/
+.vscode/
+
+# Logs & Temp
+*.log
+scratch/
+results/

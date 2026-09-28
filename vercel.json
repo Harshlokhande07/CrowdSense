@@ -1,0 +1,13 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/Frontend/$1"
+    },
+    {
+      "source": "/",
+      "destination": "/Frontend/index.html"
+    }
+  ]
+}

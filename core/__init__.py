@@ -1,0 +1,3 @@
+"""
+CrowdSense Core Package
+"""

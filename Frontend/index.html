@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CrowdSense — Intelligent Crowd Safety Platform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Figtree:wght@500;600;700;800&display=swap" rel="stylesheet"/>
+  <link href="style.css" rel="stylesheet"/>
+</head>
+<body>
+  <!-- Connection Lost Banner -->
+  <div id="connection-banner" class="connection-banner hidden">
+    ⚠️ LIVE CONNECTION LOST — Reconnecting to CrowdSense backend...
+  </div>
+
+  <div class="app">
+    <!-- Sidebar Navigation -->
+    <aside class="side">
+      <div class="brand">
+        Crowd<span class="brand-accent">Sense</span>
+        <div class="brand-sub">Safety Command Center</div>
+      </div>
+
+      <nav class="nav-menu">
+        <a class="nv on" data-t="0" href="#t0">
+          Command Center
+          <small>Live Monitoring</small>
+        </a>
+        <a class="nv" data-t="1" href="#t1">
+          8×8 Zone Heatmap
+          <small>Density Grid</small>
+        </a>
+        <a class="nv" data-t="2" href="#t2">
+          Trend Forecast
+          <small>30s Extrapolation</small>
+        </a>
+        <a class="nv" data-t="3" href="#t3">
+          Incidents & Alerts
+          <small>Security Dispatch</small>
+        </a>
+        <a class="nv" data-t="4" href="#t4">
+          System Health
+          <small>Telemetry & Status</small>
+        </a>
+      </nav>
+
+      <div class="privacy-box">
+        <div class="k">Privacy & Safety</div>
+        <div class="privacy-text">
+          Anonymous count & density analysis. No facial recognition stored or processed.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Panels -->
+    <main class="content-area">
+      <!-- Top Status Header -->
+      <header class="hd">
+        <div>
+          <h1 class="h" id="page-title">Command Center</h1>
+          <div class="p subtitle">Real-time venue spatial safety overview</div>
+        </div>
+
+        <div class="header-right">
+          <div class="status-chips">
+            <span class="chip" id="chip-source">Source: Demo Mode</span>
+            <span class="chip" id="chip-camera">Camera: --</span>
+            <span class="chip" id="chip-model">AI Model: --</span>
+            <span class="chip" id="chip-db">Database: --</span>
+            <span class="chip" id="chip-fps">FPS: --</span>
+          </div>
+          <div class="risk-badge badge-normal" id="overall-risk-badge">
+            STATUS: NORMAL
+          </div>
+        </div>
+      </header>
+
+      <!-- TAB 0: COMMAND CENTER -->
+      <section class="main-tab" id="t0">
+        <!-- Input Video Source Selector Bar -->
+        <div class="card source-selector-card">
+          <div class="source-selector-header">
+            <div class="k">Input Video Source Mode</div>
+            <div id="source-upload-error" class="source-upload-error hidden"></div>
+          </div>
+          <div class="source-controls">
+            <button class="source-btn active" data-mode="demo" id="btn-src-demo">Synthetic Demo</button>
+            <button class="source-btn" data-mode="webcam" id="btn-src-webcam">Live Webcam</button>
+            <label class="source-btn source-upload-label" for="video-file-input" id="btn-src-upload">
+              📁 Upload Video File (.mp4, .avi, .mov)
+            </label>
+            <input type="file" id="video-file-input" accept=".mp4,.avi,.mov" style="display:none;" />
+          </div>
+        </div>
+
+        <!-- KPI Row -->
+        <div class="kpi-row">
+          <div class="card kpi-card kpi-primary">
+            <div class="k">People Detected</div>
+            <div class="big" id="kpi-people">0</div>
+            <div class="kpi-sub">Total ground detections</div>
+          </div>
+          <div class="card kpi-card">
+            <div class="k">Average Density</div>
+            <div class="big" id="kpi-avg-density">0.00</div>
+            <div class="kpi-sub">Persons per cell</div>
+          </div>
+          <div class="card kpi-card kpi-accent">
+            <div class="k">Max Cell Density</div>
+            <div class="big" id="kpi-max-density">0</div>
+            <div class="kpi-sub">Peak single cell count</div>
+          </div>
+          <div class="card kpi-card kpi-warning">
+            <div class="k">Active Alerts</div>
+            <div class="big" id="kpi-active-alerts">0</div>
+            <div class="kpi-sub" id="kpi-risk-score">Max Risk: 0/100</div>
+          </div>
+        </div>
+
+        <!-- Main Monitoring Grid Layout -->
+        <div class="row main-split">
+          <!-- Left: Live Video Feed -->
+          <div class="card video-card" style="flex: 2;">
+            <div class="card-header">
+              <div class="k">Live Video Feed with Heatmap Overlay</div>
+              <div class="live-dot-tag">● LIVE FEED</div>
+            </div>
+            <div class="video-container">
+              <img id="video-stream" src="/video/feed" alt="Live Camera Feed" onerror="this.src=''; this.alt='Video Feed Unavailable (Running Synthetic Simulation)';" />
+            </div>
+          </div>
+
+          <!-- Right: Interactive 8x8 Grid & Zone Overview -->
+          <div class="card grid-card" style="flex: 1.2;">
+            <div class="card-header">
+              <div class="k">Spatial 8×8 Density Grid</div>
+              <small class="k-sub">Ground coordinates mapped</small>
+            </div>
+            <div class="grid-8x8" id="grid-matrix">
+              <!-- 64 cells generated dynamically -->
+            </div>
+            <div class="grid-legend">
+              <span class="leg-item"><i class="leg-color leg-normal"></i> Normal (&le;2)</span>
+              <span class="leg-item"><i class="leg-color leg-elevated"></i> Elevated (3-4)</span>
+              <span class="leg-item"><i class="leg-color leg-high"></i> High (5-6)</span>
+              <span class="leg-item"><i class="leg-color leg-critical"></i> Critical (&ge;7)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottleneck & Zone Ranking Row -->
+        <div class="row secondary-split">
+          <!-- Bottleneck Alert Panel -->
+          <div class="card" style="flex: 1.5;">
+            <div class="k">Bottleneck & Congestion Detector</div>
+            <div id="bottleneck-list" class="bottleneck-container">
+              <div class="placeholder-text">No congestion bottlenecks detected. Crowd movement flowing freely.</div>
+            </div>
+          </div>
+
+          <!-- Zone Ranking Panel -->
+          <div class="card" style="flex: 1;">
+            <div class="k">Zone Density Ranking</div>
+            <div id="zone-ranking-list" class="zone-ranking-container">
+              <!-- Populated via script.js -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 1: 8x8 HEATMAP -->
+      <section class="main-tab" id="t1" style="display:none;">
+        <div class="row">
+          <div class="card" style="flex: 2;">
+            <div class="k">High-Resolution Spatial Density Grid</div>
+            <div class="grid-8x8-large" id="grid-matrix-large"></div>
+          </div>
+          <div class="card" style="flex: 1;">
+            <div class="k">Zone Sector Breakdown</div>
+            <div id="zone-detailed-breakdown"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: PREDICTION & TREND FORECAST -->
+      <section class="main-tab" id="t2" style="display:none;">
+        <div class="card">
+          <div class="k">Short-Term Density Trend Estimate (30–60 Seconds Horizon)</div>
+          <div class="trend-chart-container">
+            <svg id="trend-chart-svg" viewBox="0 0 800 320" preserveAspectRatio="xMidYMid meet" style="width: 100%; height: auto; background-color: #0F172A; border-radius: 8px;"></svg>
+          </div>
+          <div id="trend-legend-container" class="trend-legend-container"></div>
+          <div id="trend-details-container" class="trend-details-container"></div>
+          <div class="disclaimer-banner">
+            ⚠️ Short-term trend estimate derived via linear regression extrapolation. Requires human verification.
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: ALERTS & INCIDENTS -->
+      <section class="main-tab" id="t3" style="display:none;">
+        <div class="row">
+          <div class="card" style="flex: 1;">
+            <div class="k">Active Incidents</div>
+            <div id="active-incidents-list"></div>
+          </div>
+          <div class="card" style="flex: 1;">
+            <div class="k">Recent Alert History</div>
+            <div id="alerts-history-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: SYSTEM HEALTH & TELEMETRY -->
+      <section class="main-tab" id="t4" style="display:none;">
+        <div class="card">
+          <div class="k">System Component Status</div>
+          <table class="health-table" id="health-table">
+            <thead>
+              <tr><th>Component</th><th>Status</th><th>Details</th></tr>
+            </thead>
+            <tbody id="health-table-body">
+              <!-- Populated via script.js -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card" style="margin-top: 16px;">
+          <div class="k">Detector accuracy check (prototype)</div>
+          <div id="accuracy-panel" style="margin-top: 10px;">
+            <!-- Populated via script.js -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer Disclaimer -->
+      <footer class="app-footer">
+        🛡️ CrowdSense Prototype Safety System · Prototype risk indicators only. All alerts require human verification.
+      </footer>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
