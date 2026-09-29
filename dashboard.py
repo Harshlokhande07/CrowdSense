@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, File, UploadFile
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, File, UploadFile, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,7 +32,8 @@ import uuid
 from core.config import (
     HOST, PORT, CORS_ORIGINS, DEMO_MODE, VIDEO_SRC,
     MAX_UPLOAD_MB, ALLOWED_UPLOAD_EXTENSIONS,
-    MAX_OPERATOR_NAME_LEN, MAX_NOTE_LEN
+    MAX_OPERATOR_NAME_LEN, MAX_NOTE_LEN,
+    WS_BROADCAST_HZ, API_AUTH_KEY
 )
 from core.engine import CrowdEngine
 
@@ -57,7 +58,7 @@ start_time = time.time()
 app = FastAPI(
     title="CrowdSense API",
     description="Intelligent Crowd Safety Monitoring & Early Warning Platform",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 # Configure CORS
@@ -73,25 +74,41 @@ app.add_middleware(
 # Active WebSocket Clients Set
 active_websockets: Set[WebSocket] = set()
 
+def check_auth(token: Optional[str] = None, header_key: Optional[str] = None, auth_header: Optional[str] = None) -> bool:
+    """Validates API authentication token when API_AUTH_KEY is configured."""
+    if not API_AUTH_KEY:
+        return True  # Open access in local demo mode
+    if token and token == API_AUTH_KEY:
+        return True
+    if header_key and header_key == API_AUTH_KEY:
+        return True
+    if auth_header and auth_header.startswith("Bearer ") and auth_header[7:].strip() == API_AUTH_KEY:
+        return True
+    return False
+
 # ────────────────── WebSocket Endpoint ──────────────────
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)):
+    if not check_auth(token=token):
+        await websocket.close(code=4001)
+        return
+
     await websocket.accept()
     active_websockets.add(websocket)
     logger.info(f"WebSocket client connected. Total clients: {len(active_websockets)}")
+
+    sleep_interval = 1.0 / max(WS_BROADCAST_HZ, 1.0)
 
     try:
         while True:
             # Broadcast current engine state
             state_data = engine.latest_state
-
             if state_data:
                 await websocket.send_json(state_data)
 
-            # Broadcast at 3 Hz (every 333 ms)
-            await asyncio.sleep(0.33)
+            await asyncio.sleep(sleep_interval)
     except WebSocketDisconnect:
-        active_websockets.remove(websocket)
+        active_websockets.discard(websocket)
         logger.info(f"WebSocket client disconnected. Remaining clients: {len(active_websockets)}")
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
@@ -104,7 +121,6 @@ def video_feed():
     def frame_generator():
         while True:
             frame = engine.latest_processed_frame
-
             if frame is not None and frame.size > 0:
                 ret, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ret:
@@ -112,7 +128,7 @@ def video_feed():
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
                     )
-            time.sleep(0.04)
+            time.sleep(0.033)
 
     return StreamingResponse(
         frame_generator(),
@@ -121,8 +137,15 @@ def video_feed():
 
 # ────────────────── REST API Endpoints ──────────────────
 @app.post("/api/source/upload")
-def upload_source_video(file: UploadFile = File(...)):
-    """Uploads a video file (.mp4, .avi, .mov), validates type and size, and switches engine source."""
+def upload_source_video(
+    file: UploadFile = File(...),
+    token: Optional[str] = Query(None),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Uploads a video file (.mp4, .avi, .mov), validates type, size, safe decode, and switches engine source."""
+    if not check_auth(token=token, header_key=x_api_key):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing API key."})
+
     filename = file.filename or ""
     ext = os.path.splitext(filename)[1].lower()
 
@@ -148,8 +171,28 @@ def upload_source_video(file: UploadFile = File(...)):
     with open(saved_path, "wb") as f:
         f.write(contents)
 
+    # Safe decode validation with timeout / try-except
+    try:
+        test_cap = cv2.VideoCapture(saved_path)
+        if not test_cap.isOpened():
+            test_cap.release()
+            if os.path.exists(saved_path):
+                os.remove(saved_path)
+            return JSONResponse(status_code=400, content={"detail": "Uploaded video could not be decoded."})
+        ret, test_frame = test_cap.read()
+        test_cap.release()
+        if not ret or test_frame is None:
+            if os.path.exists(saved_path):
+                os.remove(saved_path)
+            return JSONResponse(status_code=400, content={"detail": "Uploaded video contains no readable frames."})
+    except Exception as e:
+        if os.path.exists(saved_path):
+            os.remove(saved_path)
+        return JSONResponse(status_code=400, content={"detail": f"Video validation failed: {e}"})
+
     src_info = engine.set_source("video", file_path=saved_path, display_name=filename)
     return JSONResponse({"status": "OK", "source": src_info})
+
 
 @app.post("/api/source/select")
 def select_source_mode(payload: dict):
@@ -178,6 +221,7 @@ def get_health():
         "model": engine.detector.status,
         "database": notifications["database"],
         "twilio": notifications["twilio"],
+        "sms": notifications.get("sms", "DISABLED"),
         "ntfy": notifications["ntfy"],
         "fps": round(engine.current_fps, 1),
         "active_ws_clients": len(active_websockets)
@@ -187,6 +231,60 @@ def get_health():
 def get_state():
     """Returns latest complete engine state snapshot."""
     return engine.latest_state
+
+class TestNotifyRequest(BaseModel):
+    zone_id: Optional[str] = Field("ZONE_A", description="Target zone ID for test")
+    message: Optional[str] = Field(None, description="Custom test message body (optional)")
+
+@app.post("/api/notify/test")
+def test_notification(
+    payload: Optional[TestNotifyRequest] = None,
+    token: Optional[str] = Query(None),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Protected test endpoint to trigger a sample Twilio SMS/WhatsApp alert without waiting for a real crowd surge.
+    """
+    if not check_auth(token=token, header_key=x_api_key):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing API key."})
+
+    from core.notifier import twilio_notifier
+    from core.config import TWILIO_ENABLED
+
+    if not TWILIO_ENABLED:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "status": "DISABLED",
+                "detail": "Twilio is not configured. Set TWILIO_ACCOUNT_SID, credentials, sender, and ALERT_PHONE_NUMBERS in .env."
+            }
+        )
+
+    zone_id = payload.zone_id if payload and payload.zone_id else "ZONE_A"
+    reasons = ["Manual System Test", "Admin Verification"]
+
+    queued = twilio_notifier.send_alert(
+        zone_id=zone_id,
+        zone_name="Test Zone",
+        level="HIGH",
+        score=75,
+        reasons=reasons,
+        kind="ESCALATION",
+        recommended_actions=["Verify phone reception"]
+    )
+
+    if queued:
+        return JSONResponse(content={
+            "status": "QUEUED",
+            "message": "Test alert successfully enqueued for delivery.",
+            "recipients_count": len(twilio_notifier.get_recipients_for_zone(zone_id)),
+            "diagnostics": twilio_notifier.get_diagnostics()
+        })
+    else:
+        return JSONResponse(status_code=500, content={
+            "status": "FAILED",
+            "detail": "Failed to enqueue test alert. Check server logs."
+        })
 
 # ────────────────── Incident Management Models & Endpoints ──────────────────
 # PROTOTYPE LIMITS: No authentication in this prototype; operator name is free text.
@@ -200,8 +298,16 @@ class ResolveRequest(BaseModel):
     note: str = Field(..., max_length=MAX_NOTE_LEN, description="Resolution note (max 200 chars)")
 
 @app.post("/api/incidents/{incident_id}/ack")
-def acknowledge_incident(incident_id: str, payload: AcknowledgeRequest):
+def acknowledge_incident(
+    incident_id: str,
+    payload: AcknowledgeRequest,
+    token: Optional[str] = Query(None),
+    x_api_key: Optional[str] = Header(None)
+):
     """Acknowledges an active incident with operator name and note."""
+    if not check_auth(token=token, header_key=x_api_key):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing API key."})
+
     now = time.time()
     success, status_code, message, inc = engine.alert_manager.acknowledge_incident(
         incident_id, payload.operator, payload.note, now
@@ -211,8 +317,16 @@ def acknowledge_incident(incident_id: str, payload: AcknowledgeRequest):
     return JSONResponse(content={"status": "OK", "incident": inc})
 
 @app.post("/api/incidents/{incident_id}/resolve")
-def resolve_incident(incident_id: str, payload: ResolveRequest):
+def resolve_incident(
+    incident_id: str,
+    payload: ResolveRequest,
+    token: Optional[str] = Query(None),
+    x_api_key: Optional[str] = Header(None)
+):
     """Manually resolves an active incident with note."""
+    if not check_auth(token=token, header_key=x_api_key):
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing API key."})
+
     now = time.time()
     success, status_code, message, inc = engine.alert_manager.resolve_incident(
         incident_id, payload.note, payload.operator, now
