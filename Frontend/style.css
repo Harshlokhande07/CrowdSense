@@ -563,6 +563,133 @@ html, body {
   display: none;
 }
 
+/* Camera ON/OFF Control Button & Status Dot */
+.camera-toggle-btn {
+  background-color: #1E293B;
+  border: 1px solid #334155;
+  color: #F8FAFC;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-family: 'Figtree', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.camera-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.camera-toggle-btn.btn-cam-on {
+  background-color: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #10B981;
+}
+
+.camera-toggle-btn.btn-cam-on:hover:not(:disabled) {
+  background-color: rgba(16, 185, 129, 0.25);
+  border-color: #10B981;
+}
+
+.camera-toggle-btn.btn-cam-off {
+  background-color: rgba(100, 116, 139, 0.15);
+  border-color: rgba(100, 116, 139, 0.4);
+  color: #94A3B8;
+}
+
+.camera-toggle-btn.btn-cam-off:hover:not(:disabled) {
+  background-color: rgba(100, 116, 139, 0.25);
+  border-color: #94A3B8;
+}
+
+.cam-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-streaming {
+  background-color: #10B981;
+  box-shadow: 0 0 8px #10B981;
+}
+
+.dot-offline {
+  background-color: #EF4444;
+  box-shadow: 0 0 8px #EF4444;
+}
+
+.dot-stopped {
+  background-color: #64748B;
+}
+
+.camera-offline-hint {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  color: #FBBF24;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.camera-offline-hint.hidden {
+  display: none;
+}
+
+.kpi-card.kpi-stopped .big,
+.kpi-card.kpi-stopped .kpi-sub {
+  opacity: 0.4;
+}
+
+/* Video Feed Controls */
+.video-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid #475569;
+  color: #F8FAFC;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.video-pause-btn:hover:not(:disabled) {
+  background: #334155;
+  border-color: #64748B;
+  transform: translateY(-1px);
+}
+
+.video-pause-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.video-pause-btn.is-paused {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #F59E0B;
+  color: #FBBF24;
+}
+
+.live-dot-tag.is-paused {
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #FBBF24;
+}
+
 /* Disclaimer Footer */
 .app-footer {
   text-align: center;

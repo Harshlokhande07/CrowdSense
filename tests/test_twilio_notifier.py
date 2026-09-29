@@ -118,7 +118,7 @@ def test_alerts_sms_cooldown_and_escalation():
 
     sent_alerts = []
 
-    def mock_send_alert(zone_id, zone_name, level, score, reasons, kind, recommended_actions=None):
+    def mock_send_alert(zone_id, zone_name, level, score, reasons, kind, recommended_actions=None, **kwargs):
         sent_alerts.append({
             "zone_id": zone_id,
             "zone_name": zone_name,
@@ -212,3 +212,44 @@ def test_alerts_sms_resolved_handling():
 
         manager2.process_zone_states(zone_norm, bn_norm, preds, now=105.0)
         assert len(sent_alerts2) == 1  # No RESOLVED SMS sent
+
+
+def test_demo_safety_prefix():
+    """Prefix [DEMO] must be added to message when demo_mode is True."""
+    notifier = TwilioNotifier(max_queue_size=5, auto_start=False)
+
+    # Demo mode = True
+    msg_demo = notifier.format_message(
+        zone_name="Main Gate",
+        level="HIGH",
+        score=75,
+        reasons=["Surge"],
+        kind="ESCALATION",
+        demo_mode=True
+    )
+    assert msg_demo.startswith("[DEMO] ")
+    assert "CROWDSENSE HIGH: Main Gate" in msg_demo
+
+    # Demo mode = False (Production)
+    msg_prod = notifier.format_message(
+        zone_name="Main Gate",
+        level="HIGH",
+        score=75,
+        reasons=["Surge"],
+        kind="ESCALATION",
+        demo_mode=False
+    )
+    assert not msg_prod.startswith("[DEMO] ")
+    assert msg_prod.startswith("CROWDSENSE HIGH: Main Gate")
+
+    # Resolved in demo mode
+    msg_res_demo = notifier.format_message(
+        zone_name="Main Gate",
+        level="NORMAL",
+        score=0,
+        reasons=[],
+        kind="RESOLVED",
+        demo_mode=True
+    )
+    assert msg_res_demo.startswith("[DEMO] CROWDSENSE RESOLVED:")
+

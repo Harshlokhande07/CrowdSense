@@ -18,6 +18,12 @@
 
   const btnSrcDemo = document.getElementById('btn-src-demo');
   const btnSrcWebcam = document.getElementById('btn-src-webcam');
+  const btnSrcIpcam = document.getElementById('btn-src-ipcam');
+  const ipcamConfigRow = document.getElementById('ipcam-config-row');
+  const ipcamUrlInput = document.getElementById('ipcam-url-input');
+  const btnConnectIpcam = document.getElementById('btn-connect-ipcam');
+  const ipcamStatusHint = document.getElementById('ipcam-status-hint');
+  const ipcamStatusText = document.getElementById('ipcam-status-text');
   const btnSrcUpload = document.getElementById('btn-src-upload');
   const videoFileInput = document.getElementById('video-file-input');
   const sourceUploadError = document.getElementById('source-upload-error');
@@ -41,6 +47,204 @@
   const trendLegend = document.getElementById('trend-legend-container');
   const trendDetails = document.getElementById('trend-details-container');
 
+  const inputApiKey = document.getElementById('input-api-key');
+  const btnSaveKey = document.getElementById('btn-save-key');
+
+  const btnCameraToggle = document.getElementById('btn-camera-toggle');
+  const camToggleDot = document.getElementById('cam-toggle-dot');
+  const camToggleText = document.getElementById('cam-toggle-text');
+  const cameraOfflineHint = document.getElementById('camera-offline-hint');
+  const btnVideoPause = document.getElementById('btn-video-pause');
+  const videoPauseIcon = document.getElementById('video-pause-icon');
+  const videoPauseText = document.getElementById('video-pause-text');
+  const liveFeedTag = document.getElementById('live-feed-tag');
+  const kpiCards = Array.from(document.querySelectorAll('.kpi-card'));
+
+  let isCameraEnabled = true;
+  let cameraControlInProgress = false;
+  let isVideoPaused = false;
+  let pauseToggleInProgress = false;
+
+  // API Key Management & Authentication Helpers
+  function getStoredApiKey() {
+    return localStorage.getItem('crowdsense_api_key') || '';
+  }
+
+  function setStoredApiKey(key) {
+    if (key) {
+      localStorage.setItem('crowdsense_api_key', key.trim());
+    } else {
+      localStorage.removeItem('crowdsense_api_key');
+    }
+  }
+
+  if (inputApiKey) {
+    inputApiKey.value = getStoredApiKey();
+  }
+
+  if (btnSaveKey) {
+    btnSaveKey.addEventListener('click', () => {
+      const val = inputApiKey ? inputApiKey.value.trim() : '';
+      setStoredApiKey(val);
+      btnSaveKey.textContent = 'Saved ✓';
+      btnSaveKey.style.background = '#10B981';
+      setTimeout(() => {
+        btnSaveKey.textContent = 'Save Key';
+        btnSaveKey.style.background = '#2563EB';
+      }, 2000);
+      if (socket) {
+        socket.close(); // Reconnect WebSocket with new key
+      }
+    });
+  }
+
+  function showUnauthorizedBanner(statusCode = 401) {
+    if (connBanner) {
+      connBanner.textContent = `🔒 ${statusCode === 403 ? 'FORBIDDEN (403)' : 'UNAUTHORIZED (401)'}: Invalid or missing API key. Please configure a valid key in the sidebar.`;
+      connBanner.classList.remove('hidden');
+      connBanner.style.backgroundColor = '#DC2626';
+    }
+  }
+
+  function authFetch(url, options = {}) {
+    const key = getStoredApiKey();
+    const headers = options.headers ? { ...options.headers } : {};
+    if (key) {
+      headers['X-API-Key'] = key;
+    }
+    return fetch(url, { ...options, headers }).then(res => {
+      if (res.status === 401 || res.status === 403) {
+        showUnauthorizedBanner(res.status);
+      }
+      return res;
+    });
+  }
+
+  // Camera Control UI & Handlers
+  function updateCameraControlUI(camInfo) {
+    if (!camInfo) return;
+    const enabled = camInfo.enabled !== undefined ? camInfo.enabled : true;
+    const status = camInfo.status || (enabled ? 'ONLINE' : 'STOPPED');
+    isCameraEnabled = enabled;
+
+    if (btnCameraToggle) {
+      if (enabled && status !== 'STOPPED') {
+        btnCameraToggle.className = 'camera-toggle-btn btn-cam-on';
+        if (camToggleText) camToggleText.textContent = 'CAMERA ON';
+      } else {
+        btnCameraToggle.className = 'camera-toggle-btn btn-cam-off';
+        if (camToggleText) camToggleText.textContent = 'CAMERA OFF';
+      }
+    }
+
+    if (camToggleDot) {
+      if (!enabled || status === 'STOPPED') {
+        camToggleDot.className = 'cam-status-dot dot-stopped';
+      } else if (status === 'ONLINE') {
+        camToggleDot.className = 'cam-status-dot dot-streaming';
+      } else {
+        camToggleDot.className = 'cam-status-dot dot-offline';
+      }
+    }
+  }
+
+  if (btnCameraToggle) {
+    btnCameraToggle.addEventListener('click', () => {
+      if (cameraControlInProgress) return;
+      cameraControlInProgress = true;
+      btnCameraToggle.disabled = true;
+
+      const endpoint = isCameraEnabled ? '/api/camera/stop' : '/api/camera/start';
+      authFetch(endpoint, { method: 'POST' })
+        .then(res => {
+          if (res.status === 401 || res.status === 403) {
+            showUnauthorizedBanner(res.status);
+            throw new Error('Unauthorized');
+          }
+          if (!res.ok) {
+            return res.json().then(errData => {
+              throw new Error(errData.detail || 'Camera toggle failed.');
+            });
+          }
+          return res.json();
+        })
+        .then(resData => {
+          if (resData && resData.camera) {
+            updateCameraControlUI(resData.camera);
+            if (typeof refreshVideoStream === 'function') {
+              refreshVideoStream();
+            }
+          }
+        })
+        .catch(err => {
+          console.error('[CrowdSense] Error toggling camera:', err);
+        })
+        .finally(() => {
+          cameraControlInProgress = false;
+          if (btnCameraToggle) btnCameraToggle.disabled = false;
+        });
+    });
+  }
+
+  // Video Feed Pause / Play Controls
+  function updateVideoPauseUI(isPaused) {
+    isVideoPaused = !!isPaused;
+    if (btnVideoPause) {
+      btnVideoPause.classList.toggle('is-paused', isVideoPaused);
+      btnVideoPause.setAttribute('title', isVideoPaused ? 'Resume Video Feed' : 'Pause Video Feed');
+    }
+    if (videoPauseIcon) {
+      videoPauseIcon.textContent = isVideoPaused ? '▶️' : '⏸️';
+    }
+    if (videoPauseText) {
+      videoPauseText.textContent = isVideoPaused ? 'Resume' : 'Pause';
+    }
+    if (liveFeedTag) {
+      if (isVideoPaused) {
+        liveFeedTag.textContent = '⏸️ PAUSED';
+        liveFeedTag.classList.add('is-paused');
+      } else {
+        liveFeedTag.textContent = '● LIVE FEED';
+        liveFeedTag.classList.remove('is-paused');
+      }
+    }
+  }
+
+  if (btnVideoPause) {
+    btnVideoPause.addEventListener('click', () => {
+      if (pauseToggleInProgress) return;
+      pauseToggleInProgress = true;
+      btnVideoPause.disabled = true;
+
+      const endpoint = `/api/video/toggle-pause?camera_id=${encodeURIComponent(activeCameraId)}`;
+      authFetch(endpoint, { method: 'POST' })
+        .then(res => {
+          if (res.status === 401 || res.status === 403) {
+            showUnauthorizedBanner(res.status);
+            throw new Error('Unauthorized');
+          }
+          if (!res.ok) {
+            return res.json().then(errData => {
+              throw new Error(errData.detail || 'Video pause toggle failed.');
+            });
+          }
+          return res.json();
+        })
+        .then(data => {
+          if (data && data.is_paused !== undefined) {
+            updateVideoPauseUI(data.is_paused);
+          }
+        })
+        .catch(err => {
+          console.error('Video pause toggle error:', err);
+        })
+        .finally(() => {
+          pauseToggleInProgress = false;
+          btnVideoPause.disabled = false;
+        });
+    });
+  }
+
   // Input Video Source Selection Handlers
   function updateSourceUI(src) {
     if (!src) return;
@@ -51,7 +255,9 @@
       if (mode === 'video') {
         chipSource.textContent = `Source: Uploaded video (${name})`;
       } else if (mode === 'webcam') {
-        chipSource.textContent = `Source: Live Webcam`;
+        chipSource.textContent = `Source: Laptop Webcam`;
+      } else if (mode === 'ipcam') {
+        chipSource.textContent = `Source: Phone (IP Webcam)`;
       } else {
         chipSource.textContent = `Source: Demo Mode`;
       }
@@ -63,24 +269,44 @@
 
     if (btnSrcDemo) btnSrcDemo.classList.toggle('active', mode === 'demo');
     if (btnSrcWebcam) btnSrcWebcam.classList.toggle('active', mode === 'webcam');
+    if (btnSrcIpcam) btnSrcIpcam.classList.toggle('active', mode === 'ipcam');
     if (btnSrcUpload) btnSrcUpload.classList.toggle('active', mode === 'video');
+
+    if (ipcamConfigRow) {
+      ipcamConfigRow.classList.toggle('hidden', mode !== 'ipcam');
+    }
   }
 
-  function selectSourceMode(mode) {
+  function selectSourceMode(mode, url = null) {
     if (sourceUploadError) sourceUploadError.classList.add('hidden');
-    fetch('/api/source/select', {
+    const payload = { mode: mode };
+    if (url) payload.url = url;
+
+    authFetch(`/api/source/select?camera_id=${encodeURIComponent(activeCameraId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: mode })
+      body: JSON.stringify(payload)
     })
-    .then(res => res.json())
+    .then(res => {
+      if (!res.ok) {
+        return res.json().then(errData => {
+          throw new Error(errData.detail || 'Source mode selection failed.');
+        });
+      }
+      return res.json();
+    })
     .then(resData => {
       if (resData.source) {
         updateSourceUI(resData.source);
+        refreshVideoStream();
       }
     })
     .catch(err => {
       console.error('[CrowdSense] Error selecting source mode:', err);
+      if (sourceUploadError) {
+        sourceUploadError.textContent = `⚠️ ${err.message}`;
+        sourceUploadError.classList.remove('hidden');
+      }
     });
   }
 
@@ -90,6 +316,30 @@
 
   if (btnSrcWebcam) {
     btnSrcWebcam.addEventListener('click', () => selectSourceMode('webcam'));
+  }
+
+  if (btnSrcIpcam) {
+    btnSrcIpcam.addEventListener('click', () => {
+      const currentUrl = (ipcamUrlInput && ipcamUrlInput.value.trim()) ? ipcamUrlInput.value.trim() : 'http://192.168.1.100:8080';
+      if (ipcamUrlInput && !ipcamUrlInput.value) {
+        ipcamUrlInput.value = currentUrl;
+      }
+      selectSourceMode('ipcam', currentUrl);
+    });
+  }
+
+  if (btnConnectIpcam && ipcamUrlInput) {
+    btnConnectIpcam.addEventListener('click', () => {
+      const url = ipcamUrlInput.value.trim();
+      if (!url) {
+        if (sourceUploadError) {
+          sourceUploadError.textContent = '⚠️ Please enter an IP Webcam URL (e.g. http://192.168.1.100:8080)';
+          sourceUploadError.classList.remove('hidden');
+        }
+        return;
+      }
+      selectSourceMode('ipcam', url);
+    });
   }
 
   if (videoFileInput) {
@@ -102,7 +352,7 @@
       const formData = new FormData();
       formData.append('file', file);
 
-      fetch('/api/source/upload', {
+      authFetch('/api/source/upload', {
         method: 'POST',
         body: formData
       })
@@ -117,6 +367,7 @@
       .then(resData => {
         if (resData.source) {
           updateSourceUI(resData.source);
+          refreshVideoStream();
         }
         videoFileInput.value = '';
       })
@@ -157,26 +408,168 @@
   let reconnectInterval = 1000;
   const maxReconnectInterval = 10000;
 
-  function setBackendOfflineState() {
-    if (connBanner) {
-      connBanner.textContent = '⚠️ LIVE CONNECTION LOST — BACKEND OFFLINE (Reconnecting...)';
-      connBanner.classList.remove('hidden');
+  // Multi-Camera State & Controls
+  let activeCameraId = 'cam-1';
+  const cameraSelect = document.getElementById('camera-select');
+  const venueOverviewCams = document.getElementById('venue-overview-cams');
+
+  function loadCameras() {
+    authFetch('/api/cameras')
+      .then(res => res.ok ? res.json() : [])
+      .then(cams => {
+        if (cameraSelect && cams && cams.length > 0) {
+          const currentVal = cameraSelect.value || activeCameraId;
+          cameraSelect.innerHTML = '';
+          cams.forEach(cam => {
+            const opt = document.createElement('option');
+            opt.value = cam.id;
+            opt.textContent = `${cam.name || cam.id} (${cam.status || 'READY'})`;
+            if (cam.id === currentVal) opt.selected = true;
+            cameraSelect.appendChild(opt);
+          });
+        }
+      })
+      .catch(err => console.debug('[CrowdSense] Camera list fetch warning:', err));
+  }
+
+  function updateVenueOverview() {
+    authFetch('/api/venue/overview')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!venueOverviewCams || !data || !data.cameras) return;
+        venueOverviewCams.innerHTML = '';
+        data.cameras.forEach(cam => {
+          const badge = document.createElement('div');
+          badge.style.padding = '4px 8px';
+          badge.style.borderRadius = '4px';
+          badge.style.fontSize = '11px';
+          badge.style.fontWeight = '700';
+          badge.style.cursor = 'pointer';
+          badge.style.display = 'flex';
+          badge.style.alignItems = 'center';
+          badge.style.gap = '6px';
+          badge.style.border = '1px solid rgba(255,255,255,0.1)';
+
+          const hRisk = cam.highest_risk_zone;
+          const rLvl = hRisk ? hRisk.level : 'NORMAL';
+          const rScore = hRisk ? hRisk.risk_score : 0;
+          const zName = hRisk ? hRisk.name : 'All Normal';
+
+          if (rLvl === 'CRITICAL') {
+            badge.style.background = '#991B1B';
+            badge.style.color = '#FEE2E2';
+          } else if (rLvl === 'HIGH' || rLvl === 'CONGESTION') {
+            badge.style.background = '#C2410C';
+            badge.style.color = '#FFEDD5';
+          } else if (rLvl === 'WARNING' || rLvl === 'ELEVATED') {
+            badge.style.background = '#854D0E';
+            badge.style.color = '#FEF9C3';
+          } else {
+            badge.style.background = '#065F46';
+            badge.style.color = '#D1FAE5';
+          }
+
+          badge.textContent = `📹 ${cam.camera_name || cam.camera_id}: ${cam.people_count}p | Peak: ${zName} (${rScore}/100)`;
+          badge.addEventListener('click', () => {
+            if (cameraSelect) {
+              cameraSelect.value = cam.camera_id;
+              cameraSelect.dispatchEvent(new Event('change'));
+            }
+          });
+          venueOverviewCams.appendChild(badge);
+        });
+      })
+      .catch(() => {});
+  }
+
+  function refreshVideoStream() {
+    const streamImg = document.getElementById('video-stream') || document.getElementById('live-stream-img');
+    if (streamImg) {
+      streamImg.src = `/video/feed?camera_id=${encodeURIComponent(activeCameraId)}&t=${Date.now()}`;
     }
+  }
+
+  const mainStreamImg = document.getElementById('video-stream') || document.getElementById('live-stream-img');
+  if (mainStreamImg) {
+    mainStreamImg.onerror = function() {
+      console.warn('[CrowdSense] Video stream interrupted, retrying in 1s...');
+      setTimeout(refreshVideoStream, 1000);
+    };
+  }
+
+  if (cameraSelect) {
+    cameraSelect.addEventListener('change', (e) => {
+      activeCameraId = e.target.value;
+      console.log('[CrowdSense] Switched active camera feed to:', activeCameraId);
+      refreshVideoStream();
+      if (socket) {
+        socket.close();
+      }
+    });
+  }
+
+  loadCameras();
+  updateVenueOverview();
+  setInterval(updateVenueOverview, 4000);
+
+  // Status Banner Management (4 distinct states: UNAUTHORIZED, BACKEND_DISCONNECTED, CAMERA_OFFLINE, CAMERA_STOPPED)
+  let currentBannerState = 'NONE';
+  let lastWsMessageTimestamp = Date.now();
+
+  function updateStatusBanner(state, customMessage = null) {
+    if (!connBanner) return;
+    currentBannerState = state;
+
+    if (state === 'UNAUTHORIZED') {
+      connBanner.textContent = customMessage || '🔒 UNAUTHORIZED: Invalid or missing API key. Please check your credentials.';
+      connBanner.style.backgroundColor = '#DC2626';
+      connBanner.classList.remove('hidden');
+    } else if (state === 'BACKEND_DISCONNECTED') {
+      connBanner.textContent = '⚠️ BACKEND DISCONNECTED: WebSocket connection lost (Reconnecting...)';
+      connBanner.style.backgroundColor = '#B91C1C';
+      connBanner.classList.remove('hidden');
+    } else if (state === 'CAMERA_OFFLINE') {
+      connBanner.textContent = '⚠️ CAMERA OFFLINE: Video source is disconnected or unreachable.';
+      connBanner.style.backgroundColor = '#C2410C';
+      connBanner.classList.remove('hidden');
+    } else if (state === 'CAMERA_STOPPED') {
+      connBanner.textContent = '⏹️ CAMERA STOPPED: Live camera capture is paused. Click CAMERA ON to resume.';
+      connBanner.style.backgroundColor = '#334155';
+      connBanner.classList.remove('hidden');
+    } else {
+      connBanner.classList.add('hidden');
+    }
+  }
+
+  function setBackendOfflineState() {
+    if (currentBannerState !== 'UNAUTHORIZED') {
+      updateStatusBanner('BACKEND_DISCONNECTED');
+    }
+  }
+
+  function showUnauthorizedBanner(statusCode = 401) {
+    const msg = `🔒 ${statusCode === 403 ? 'FORBIDDEN (403)' : 'UNAUTHORIZED (401)'}: Invalid or missing API key. Please configure a valid key in the sidebar.`;
+    updateStatusBanner('UNAUTHORIZED', msg);
   }
 
   function connectWebSocket() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    const key = getStoredApiKey();
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws?camera_id=${encodeURIComponent(activeCameraId)}${key ? `&key=${encodeURIComponent(key)}` : ''}`;
 
     socket = new WebSocket(wsUrl);
 
     socket.onopen = function() {
-      console.log('[CrowdSense] WebSocket connection established.');
-      if (connBanner) connBanner.classList.add('hidden');
+      console.log('[CrowdSense] WebSocket connection established for camera:', activeCameraId);
+      lastWsMessageTimestamp = Date.now();
+      if (currentBannerState === 'BACKEND_DISCONNECTED') {
+        updateStatusBanner('NONE');
+      }
       reconnectInterval = 1000;
     };
 
     socket.onmessage = function(event) {
+      lastWsMessageTimestamp = Date.now();
       try {
         const data = JSON.parse(event.data);
         updateDashboardUI(data);
@@ -185,9 +578,13 @@
       }
     };
 
-    socket.onclose = function() {
-      console.warn('[CrowdSense] WebSocket connection closed.');
-      setBackendOfflineState();
+    socket.onclose = function(event) {
+      console.warn('[CrowdSense] WebSocket connection closed, code:', event.code);
+      if (event.code === 4001 || event.code === 4003 || event.code === 1008) {
+        showUnauthorizedBanner(event.code === 4003 ? 403 : 401);
+      } else {
+        setBackendOfflineState();
+      }
       socket = null;
       setTimeout(connectWebSocket, reconnectInterval);
       reconnectInterval = Math.min(reconnectInterval * 1.5, maxReconnectInterval);
@@ -199,13 +596,29 @@
     };
   }
 
+  // WebSocket Watchdog: marks BACKEND_DISCONNECTED if no message arrives within 3s
+  setInterval(function() {
+    if (currentBannerState === 'UNAUTHORIZED') return;
+    const isWsOpen = socket && socket.readyState === WebSocket.OPEN;
+    const elapsed = Date.now() - lastWsMessageTimestamp;
+
+    if (!isWsOpen || elapsed > 3000) {
+      if (currentBannerState !== 'BACKEND_DISCONNECTED') {
+        setBackendOfflineState();
+      }
+    }
+  }, 1000);
+
   // Fallback Polling if WebSocket is disconnected
   setInterval(function() {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      fetch('/api/state')
-        .then(res => res.json())
+      authFetch(`/api/state?camera_id=${encodeURIComponent(activeCameraId)}`)
+        .then(res => {
+          if (!res.ok) throw new Error('State fetch failed');
+          return res.json();
+        })
         .then(data => {
-          if (connBanner) connBanner.classList.add('hidden');
+          lastWsMessageTimestamp = Date.now();
           updateDashboardUI(data);
         })
         .catch(() => {
@@ -221,11 +634,57 @@
     const sys = data.system || {};
     const src = data.source || sys.source || {};
     updateSourceUI(src);
+    updateVideoPauseUI(src.is_paused !== undefined ? src.is_paused : false);
     
     // 1. Status Chips with Explicit States
     const camStatus = sys.demo_mode ? 'DEMO MODE' : (sys.camera || 'CAMERA OFFLINE');
+    const camEnabled = sys.camera_enabled !== undefined ? sys.camera_enabled : (camStatus !== 'STOPPED');
     const modelStatus = sys.model || 'AI MODEL UNAVAILABLE';
     const dbStatus = sys.database || 'DATABASE DISCONNECTED';
+
+    updateCameraControlUI({
+      enabled: camEnabled,
+      status: camStatus
+    });
+
+    const isStopped = !camEnabled || camStatus === 'STOPPED';
+    kpiCards.forEach(card => {
+      card.classList.toggle('kpi-stopped', isStopped);
+    });
+
+    // Synchronize 4-state status banner
+    if (currentBannerState !== 'UNAUTHORIZED') {
+      if (isStopped && !sys.demo_mode) {
+        updateStatusBanner('CAMERA_STOPPED');
+      } else if (camStatus === 'OFFLINE' && !sys.demo_mode) {
+        updateStatusBanner('CAMERA_OFFLINE');
+      } else {
+        updateStatusBanner('NONE');
+      }
+    }
+
+    if (cameraOfflineHint) {
+      const isWebcam = (src.mode === 'webcam' || sys.source?.mode === 'webcam');
+      const isOffline = camStatus === 'OFFLINE' && !isStopped;
+      cameraOfflineHint.classList.toggle('hidden', !(isWebcam && isOffline));
+    }
+
+    if (ipcamStatusHint && ipcamStatusText) {
+      const isIpcam = (src.mode === 'ipcam' || sys.source?.mode === 'ipcam');
+      ipcamStatusHint.classList.toggle('hidden', !isIpcam);
+      if (isIpcam) {
+        if (isStopped) {
+          ipcamStatusText.textContent = 'CAMERA STOPPED (Capture paused)';
+          ipcamStatusHint.style.color = '#94A3B8';
+        } else if (camStatus === 'ONLINE') {
+          ipcamStatusText.textContent = 'LIVE (Connected to IP Webcam)';
+          ipcamStatusHint.style.color = '#10B981';
+        } else {
+          ipcamStatusText.textContent = 'CAMERA OFFLINE - check phone Wi-Fi / IP Webcam app running';
+          ipcamStatusHint.style.color = '#F59E0B';
+        }
+      }
+    }
     
     const procFps = src.processing_fps !== undefined ? src.processing_fps.toFixed(1) : (sys.fps !== undefined ? sys.fps.toFixed(1) : '--');
     const vidFps = src.video_fps !== undefined ? src.video_fps.toFixed(1) : '--';
@@ -253,8 +712,8 @@
       riskBadge.textContent = `STATUS: ${riskLevel}`;
       riskBadge.className = 'risk-badge ' + (
         riskLevel === 'CRITICAL' ? 'badge-critical' :
-        riskLevel === 'HIGH' ? 'badge-high' :
-        riskLevel === 'WARNING' ? 'badge-warning' : 'badge-normal'
+        (riskLevel === 'HIGH' || riskLevel === 'CONGESTION') ? 'badge-high' :
+        (riskLevel === 'WARNING' || riskLevel === 'ELEVATED') ? 'badge-warning' : 'badge-normal'
       );
     }
 

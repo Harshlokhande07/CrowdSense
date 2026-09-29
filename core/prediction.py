@@ -119,39 +119,47 @@ class TrendEstimator:
         predicted_level = GridDensityAnalyzer.get_density_level(predicted_count)
 
         # Risk score slope & proactive time_to_threshold calculation
+        # Forecast guard: time_to_threshold_sec is null when slope <= 0, R² is below threshold, or result is negative.
         time_to_threshold_sec = None
         forecast_message = None
 
-        risk_buf = self.risk_history[zone_id]
-        risk_times, risk_scores = [], []
-        for t, s in risk_buf:
-            if now - t <= self.window_seconds:
-                risk_times.append(t - now)
-                risk_scores.append(float(s))
+        if (slope > 0) and (r_squared >= R2_CONFIDENCE_THRESHOLD) and (not is_low_confidence):
+            risk_buf = self.risk_history[zone_id]
+            risk_times, risk_scores = [], []
+            for t, s in risk_buf:
+                if now - t <= self.window_seconds:
+                    risk_times.append(t - now)
+                    risk_scores.append(float(s))
 
-        if len(risk_times) >= 15 and not is_low_confidence:
-            rx = np.array(risk_times, dtype=float)
-            ry = np.array(risk_scores, dtype=float)
-            rss_tot = float(np.sum((ry - np.mean(ry)) ** 2))
-            if rss_tot >= 1e-6:
-                r_slope, _ = np.polyfit(rx, ry, 1)
-                if r_slope > 0.1:  # Rising risk score per second
-                    # Target next severity state
-                    if current_risk_score < 55:
-                        target_name, target_score = "HIGH", 55.0
-                    elif current_risk_score < 70:
-                        target_name, target_score = "CONGESTION", 70.0
-                    elif current_risk_score < 85:
-                        target_name, target_score = "CRITICAL", 85.0
-                    else:
-                        target_name, target_score = None, None
+            if len(risk_times) >= 15:
+                rx = np.array(risk_times, dtype=float)
+                ry = np.array(risk_scores, dtype=float)
+                rss_tot = float(np.sum((ry - np.mean(ry)) ** 2))
+                if rss_tot >= 1e-6:
+                    r_slope, _ = np.polyfit(rx, ry, 1)
+                    if r_slope > 0.05:  # Positive rising risk score per second
+                        # Target next severity state
+                        if current_risk_score < 55:
+                            target_name, target_score = "HIGH", 55.0
+                        elif current_risk_score < 70:
+                            target_name, target_score = "CONGESTION", 70.0
+                        elif current_risk_score < 85:
+                            target_name, target_score = "CRITICAL", 85.0
+                        else:
+                            target_name, target_score = None, None
 
-                    if target_name is not None and target_score > current_risk_score:
-                        delta = target_score - current_risk_score
-                        est_sec = delta / r_slope
-                        if 0 < est_sec <= 300:
-                            time_to_threshold_sec = round(float(est_sec), 1)
-                            forecast_message = f"Reaches {target_name} in ~{int(time_to_threshold_sec)}s"
+                        if target_name is not None and target_score > current_risk_score:
+                            delta = target_score - current_risk_score
+                            est_sec = delta / r_slope
+                            # Guard: Must be strictly positive and within horizon
+                            if est_sec > 0 and est_sec <= 300:
+                                time_to_threshold_sec = round(float(est_sec), 1)
+                                forecast_message = f"Reaches {target_name} in ~{int(time_to_threshold_sec)}s"
+
+        # Final guard: ensure null if invalid or negative
+        if time_to_threshold_sec is not None and time_to_threshold_sec <= 0:
+            time_to_threshold_sec = None
+            forecast_message = None
 
         return {
             "predicted_count": predicted_count,

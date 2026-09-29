@@ -4,6 +4,10 @@ Loads environment variables, defines prototype risk thresholds, zone cell-range 
 """
 
 import os
+import re
+import json
+import ipaddress
+import urllib.parse
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
@@ -144,6 +148,28 @@ TWILIO_CHANNEL: str = os.getenv("TWILIO_CHANNEL", "sms").lower().strip()
 if TWILIO_CHANNEL not in ("sms", "whatsapp"):
     TWILIO_CHANNEL = "sms"
 
+# Multi-Camera configuration (supports 1 to 4 cameras)
+# Format in .env: CAMERAS='[{"id": "cam-1", "name": "Main Concourse", "source": "crowd.mp4"}, ...]'
+_raw_cameras = os.getenv("CAMERAS", "").strip()
+CAMERAS: List[Dict[str, Any]] = []
+if _raw_cameras:
+    try:
+        parsed_cams = json.loads(_raw_cameras)
+        if isinstance(parsed_cams, list) and len(parsed_cams) > 0:
+            CAMERAS = parsed_cams
+    except Exception as _e:
+        config_logger.warning(f"Could not parse CAMERAS JSON: {_e}")
+
+if not CAMERAS:
+    CAMERAS = [
+        {
+            "id": "cam-1",
+            "name": os.getenv("CAMERA_NAME", "Main Entrance Camera"),
+            "source": VIDEO_SRC,
+            "zones": ZONES_CONFIG
+        }
+    ]
+
 def is_valid_e164(number: str) -> bool:
     """Validates international E.164 phone format (e.g. +12345678901)."""
     if not number:
@@ -232,6 +258,64 @@ OPPOSING_FLOW_ANGLE_DEG: float = float(os.getenv("OPPOSING_FLOW_ANGLE_DEG", "120
 
 # Telemetry and Calibration
 WS_BROADCAST_HZ: float = float(os.getenv("WS_BROADCAST_HZ", "8.0"))
-API_AUTH_KEY: str = os.getenv("API_AUTH_KEY", "")
+CROWDSENSE_API_KEY: str = os.getenv("CROWDSENSE_API_KEY", os.getenv("API_AUTH_KEY", "")).strip()
+API_AUTH_KEY: str = CROWDSENSE_API_KEY  # Backward-compatible alias
+MOBILE_CAM_TOKEN: str = os.getenv("MOBILE_CAM_TOKEN", "").strip()
+MOBILE_FPS: int = int(os.getenv("MOBILE_FPS", "10"))
+REQUIRE_AUTH_READS: bool = os.getenv("REQUIRE_AUTH_READS", "false").lower() in ("true", "1", "yes")
 CAMERA_CALIBRATION_POINTS: str = os.getenv("CAMERA_CALIBRATION_POINTS", "")
+
+# Local Webcam Hardware Configuration
+WEBCAM_INDEX: int = int(os.getenv("WEBCAM_INDEX", "0"))
+WEBCAM_WIDTH: int = int(os.getenv("WEBCAM_WIDTH", "1280"))
+WEBCAM_HEIGHT: int = int(os.getenv("WEBCAM_HEIGHT", "720"))
+WEBCAM_FPS: int = int(os.getenv("WEBCAM_FPS", "30"))
+WEBCAM_AUTOSTART: bool = os.getenv("WEBCAM_AUTOSTART", "true").lower() in ("true", "1", "yes")
+
+# Android IP Webcam Source Configuration
+IPCAM_URL: str = os.getenv("IPCAM_URL", "http://192.168.1.100:8080").strip()
+IPCAM_PATH: str = os.getenv("IPCAM_PATH", "/video").strip()
+IPCAM_USER: str = os.getenv("IPCAM_USER", "").strip()
+IPCAM_PASS: str = os.getenv("IPCAM_PASS", "").strip()
+IPCAM_RETRY_SEC: float = float(os.getenv("IPCAM_RETRY_SEC", "3.0"))
+IPCAM_TIMEOUT_SEC: float = float(os.getenv("IPCAM_TIMEOUT_SEC", "5.0"))
+
+
+def validate_ipcam_url(url: str) -> tuple[bool, str]:
+    """
+    Validates IP Webcam URL for SSRF protection:
+    - Must be http:// or https://
+    - Host must be private LAN IP (10.x, 172.16-31.x, 192.168.x) or localhost/127.0.0.1
+    - Rejects public IPs and public domain names.
+    Returns (is_valid, error_or_sanitized_url)
+    """
+    if not url:
+        return False, "URL cannot be empty."
+
+    url_str = url.strip()
+    try:
+        parsed = urllib.parse.urlparse(url_str)
+    except Exception as e:
+        return False, f"Invalid URL format: {e}"
+
+    if parsed.scheme.lower() not in ("http", "https"):
+        return False, f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed."
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL missing valid host/IP."
+
+    hostname_clean = hostname.strip().lower()
+    if hostname_clean in ("localhost", "127.0.0.1", "::1"):
+        return True, url_str
+
+    try:
+        ip_obj = ipaddress.ip_address(hostname_clean)
+        if ip_obj.is_private or ip_obj.is_loopback:
+            return True, url_str
+        else:
+            return False, f"SSRF Protection: Host IP '{hostname_clean}' is not a private LAN IP or localhost."
+    except ValueError:
+        return False, f"SSRF Protection: Host '{hostname_clean}' is not a valid private LAN IP address."
+
 

@@ -39,7 +39,9 @@ SEVERITY_ENTRY_THRESHOLDS = {
 }
 
 class AlertManager:
-    def __init__(self):
+    def __init__(self, demo_mode: bool = False, camera_name: str = "Main Camera"):
+        self.demo_mode = demo_mode
+        self.camera_name = camera_name
         # Service status indicators
         self.db_status = "NOT_CONFIGURED"
         self.ntfy_status = "READY" if ENABLE_MOBILE_ALERT else "DISABLED"
@@ -274,6 +276,7 @@ class AlertManager:
                         "id": f"ALT-{z_id}-{int(now)}",
                         "zone_id": z_id,
                         "zone_name": z_name,
+                        "camera_name": self.camera_name,
                         "severity": raw_severity,
                         "status": "ACTIVE",
                         "current_count": count,
@@ -427,6 +430,7 @@ class AlertManager:
             if (now - last_t) < SMS_COOLDOWN_SEC:
                 return
 
+        twilio_notifier.demo_mode = self.demo_mode
         twilio_notifier.send_alert(
             zone_id=zone_id,
             zone_name=zone_name,
@@ -496,7 +500,9 @@ class AlertManager:
         severity = incident.get("severity", "ALERT")
         count = incident.get("current_count", 0)
         action = incident.get("action_recommended", "")
-        message = f"[{severity}] {z_name}: {count} people detected. Action: {action}"
+        demo_prefix = "[DEMO] " if self.demo_mode else ""
+        message = f"{demo_prefix}[{severity}] {z_name}: {count} people detected. Action: {action}"
+        title = f"{demo_prefix}CrowdSense Alert - {severity}"
 
         for attempt in range(2):
             try:
@@ -504,7 +510,7 @@ class AlertManager:
                     f"https://ntfy.sh/{NTFY_TOPIC}",
                     data=message.encode("utf-8"),
                     headers={
-                        "Title": f"CrowdSense Alert - {severity}",
+                        "Title": title,
                         "Priority": "urgent" if severity == "CRITICAL" else "high",
                         "Tags": "warning,rotating_light"
                     },

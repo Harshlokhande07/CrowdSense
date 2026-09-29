@@ -53,6 +53,7 @@ class TwilioNotifier:
         self._client = None
         self._client_init_attempted = False
         self._client_init_error: Optional[str] = None
+        self.demo_mode: bool = False
 
         # Start Background Worker
         self._worker_thread = None
@@ -101,21 +102,26 @@ class TwilioNotifier:
         score: int,
         reasons: List[str],
         kind: str,
-        recommended_actions: Optional[List[str]] = None
+        recommended_actions: Optional[List[str]] = None,
+        demo_mode: bool = False,
+        camera_name: Optional[str] = None
     ) -> str:
         """
         Formats a compact, high-priority message (aiming for <= 160 chars for standard single SMS segment).
-        Format: CROWDSENSE {LEVEL}: {zone_name} | Risk {score}/100 | {top 2 reasons} | {HH:MM:SS}
+        Prefixes [DEMO] when demo thresholds are active and includes camera name.
+        Format: [DEMO] CROWDSENSE {LEVEL}: {zone_name} ({camera_name}) | Risk {score}/100 | {top 2 reasons} | {HH:MM:SS}
         """
         now_str = time.strftime("%H:%M:%S", time.localtime())
         reasons_str = ", ".join(reasons[:2]) if reasons else "High Congestion"
+        demo_prefix = "[DEMO] " if demo_mode else ""
+        zone_str = f"{zone_name} ({camera_name})" if camera_name else zone_name
 
         if kind == "RESOLVED":
-            base_msg = f"CROWDSENSE RESOLVED: {zone_name} is back to NORMAL | {now_str}"
+            base_msg = f"{demo_prefix}CROWDSENSE RESOLVED: {zone_str} is back to NORMAL | {now_str}"
             return base_msg
 
         prefix = "CROWDSENSE " + ("ALERT" if level == "WARNING" else level)
-        base_msg = f"{prefix}: {zone_name} | Risk {score}/100 | {reasons_str} | {now_str}"
+        base_msg = f"{demo_prefix}{prefix}: {zone_str} | Risk {score}/100 | {reasons_str} | {now_str}"
 
         # Append top recommended action if it fits comfortably within standard SMS segment
         if recommended_actions and len(recommended_actions) > 0:
@@ -140,7 +146,9 @@ class TwilioNotifier:
         score: int,
         reasons: List[str],
         kind: str,
-        recommended_actions: Optional[List[str]] = None
+        recommended_actions: Optional[List[str]] = None,
+        demo_mode: Optional[bool] = None,
+        camera_name: Optional[str] = None
     ) -> bool:
         """
         Enqueues an alert for background delivery without blocking the inference loop.
@@ -149,7 +157,8 @@ class TwilioNotifier:
         if not TWILIO_ENABLED:
             return False
 
-        message_body = self.format_message(zone_name, level, score, reasons, kind, recommended_actions)
+        use_demo = self.demo_mode if demo_mode is None else demo_mode
+        message_body = self.format_message(zone_name, level, score, reasons, kind, recommended_actions, demo_mode=use_demo, camera_name=camera_name)
         recipients = self.get_recipients_for_zone(zone_id)
 
         if not recipients:

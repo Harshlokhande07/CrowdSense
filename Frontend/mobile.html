@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CrowdSense Mobile Camera Streamer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0B0F19;
+      --card-bg: rgba(15, 23, 42, 0.85);
+      --border: rgba(255, 255, 255, 0.1);
+      --primary: #3B82F6;
+      --success: #10B981;
+      --warning: #F59E0B;
+      --danger: #EF4444;
+      --text: #F8FAFC;
+      --text-sub: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .logo {
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .logo-badge {
+      background: var(--primary);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      backdrop-filter: blur(12px);
+    }
+    .notice-banner {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #93C5FD;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #FCA5A5;
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      display: none;
+    }
+    .preview-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .overlay-stats {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      display: flex;
+      gap: 10px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-sub);
+      display: inline-block;
+      margin-right: 4px;
+    }
+    .status-dot.connecting {
+      background: var(--warning);
+      box-shadow: 0 0 8px var(--warning);
+      animation: pulse 1s infinite;
+    }
+    .status-dot.streaming {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+    .status-dot.disconnected {
+      background: var(--danger);
+    }
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 1; }
+      100% { opacity: 0.4; }
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-sub);
+      margin-bottom: 4px;
+      display: block;
+    }
+    input, select {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    .btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 14px;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #2563EB; }
+    .btn.stop { background: var(--danger); }
+    .btn.stop:hover { background: #DC2626; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        🛡️ CrowdSense <span class="logo-badge">MOBILE CAM</span>
+      </div>
+      <div id="status-badge" style="font-size: 12px; color: var(--text-sub); font-weight: 600;">
+        <span class="status-dot disconnected" id="dot"></span> <span id="status-text">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- Stand & Placement Notice -->
+    <div class="notice-banner">
+      📍 <span><strong>Note:</strong> Mount the phone on a stand for accurate movement analysis.</span>
+    </div>
+
+    <!-- HTTPS Required Error Banner -->
+    <div id="https-error" class="error-banner">
+      ⚠️ <strong>HTTPS required:</strong> Mobile camera access (<code>getUserMedia</code>) requires a secure HTTPS context or localhost.
+    </div>
+
+    <!-- Auth / Connection Error Banner -->
+    <div id="auth-error" class="error-banner"></div>
+
+    <!-- Live Preview Viewport -->
+    <div class="preview-container">
+      <video id="webcam-preview" autoplay playsinline muted></video>
+      <div class="overlay-stats">
+        <span id="fps-counter">0 FPS</span>
+        <span id="frames-counter">0 frames</span>
+      </div>
+    </div>
+
+    <!-- Hidden Canvas for frame extraction -->
+    <canvas id="capture-canvas" style="display: none;"></canvas>
+
+    <!-- Controls Form -->
+    <div class="card">
+      <div class="controls-grid">
+        <div>
+          <label for="camera-select">Camera Lens</label>
+          <select id="camera-select">
+            <option value="environment" selected>Rear Camera (Back)</option>
+            <option value="user">Front Camera (Selfie)</option>
+          </select>
+        </div>
+        <div>
+          <label for="camera-id">Camera Channel</label>
+          <input type="text" id="camera-id" value="cam-1" placeholder="cam-1">
+        </div>
+      </div>
+
+      <div class="controls-grid">
+        <div>
+          <label for="stream-fps">Target Frame Rate</label>
+          <select id="stream-fps">
+            <option value="5">5 FPS (Low Bandwidth)</option>
+            <option value="10" selected>10 FPS (Standard)</option>
+            <option value="12">12 FPS (Smooth)</option>
+            <option value="15">15 FPS (High Speed)</option>
+          </select>
+        </div>
+        <div>
+          <label for="mobile-token">Access Token</label>
+          <input type="password" id="mobile-token" placeholder="Enter MOBILE_CAM_TOKEN">
+        </div>
+      </div>
+
+      <button id="stream-toggle-btn" class="btn">
+        <span>📹 Start Camera Stream</span>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const videoEl = document.getElementById('webcam-preview');
+      const canvasEl = document.getElementById('capture-canvas');
+      const ctx = canvasEl.getContext('2d');
+      const toggleBtn = document.getElementById('stream-toggle-btn');
+      const statusDot = document.getElementById('dot');
+      const statusText = document.getElementById('status-text');
+      const fpsCounter = document.getElementById('fps-counter');
+      const framesCounter = document.getElementById('frames-counter');
+      const tokenInput = document.getElementById('mobile-token');
+      const camIdInput = document.getElementById('camera-id');
+      const cameraSelect = document.getElementById('camera-select');
+      const fpsSelect = document.getElementById('stream-fps');
+      const httpsError = document.getElementById('https-error');
+      const authError = document.getElementById('auth-error');
+
+      let stream = null;
+      let ws = null;
+      let isStreamingIntent = false;
+      let frameTimer = null;
+      let reconnectTimer = null;
+      let reconnectDelay = 1000;
+      let frameCount = 0;
+      let lastFpsTime = Date.now();
+      let framesInSec = 0;
+      let wakeLock = null;
+
+      // Check HTTPS requirement
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        httpsError.style.display = 'block';
+        toggleBtn.disabled = true;
+      }
+
+      // Pre-fill token, camera_id, and fps from URL query params
+      const urlParams = new URLSearchParams(window.location.search);
+      const tokenFromUrl = urlParams.get('token');
+      const camFromUrl = urlParams.get('camera_id');
+      const fpsFromUrl = urlParams.get('fps');
+      if (tokenFromUrl) tokenInput.value = tokenFromUrl;
+      if (camFromUrl) camIdInput.value = camFromUrl;
+      if (fpsFromUrl && ['5', '10', '12', '15'].includes(fpsFromUrl)) fpsSelect.value = fpsFromUrl;
+
+      // Request Screen Wake Lock to keep phone display awake
+      async function acquireWakeLock() {
+        if ('wakeLock' in navigator) {
+          try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock.addEventListener('release', () => {
+              wakeLock = null;
+            });
+          } catch (e) {
+            console.warn('Wake Lock request failed:', e);
+          }
+        }
+      }
+
+      function releaseWakeLock() {
+        if (wakeLock) {
+          try { wakeLock.release(); } catch(e) {}
+          wakeLock = null;
+        }
+      }
+
+      // Re-acquire wake lock on visibility change
+      document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible' && isStreamingIntent) {
+          await acquireWakeLock();
+        }
+      });
+
+      function setStatus(state, message) {
+        statusDot.className = 'status-dot ' + state;
+        statusText.textContent = message || (
+          state === 'streaming' ? 'Streaming' :
+          state === 'connecting' ? 'Connecting' : 'Disconnected'
+        );
+        statusText.style.color = (
+          state === 'streaming' ? 'var(--success)' :
+          state === 'connecting' ? 'var(--warning)' : 'var(--text-sub)'
+        );
+      }
+
+      async function startCamera() {
+        authError.style.display = 'none';
+        const facingMode = cameraSelect.value;
+        try {
+          if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+          }
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: parseInt(fpsSelect.value, 10), max: 20 }
+            },
+            audio: false
+          });
+          videoEl.srcObject = stream;
+          await videoEl.play();
+        } catch (err) {
+          authError.textContent = 'Camera permission denied or camera unavailable: ' + err.message;
+          authError.style.display = 'block';
+          throw err;
+        }
+      }
+
+      function connectWebSocket() {
+        if (!isStreamingIntent) return;
+        setStatus('connecting', 'Connecting...');
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const token = encodeURIComponent(tokenInput.value.trim());
+        const camId = encodeURIComponent(camIdInput.value.trim() || 'cam-1');
+        const wsUrl = `${protocol}//${host}/ws/mobile-cam?token=${token}&camera_id=${camId}`;
+
+        try {
+          ws = new WebSocket(wsUrl);
+          ws.binaryType = 'arraybuffer';
+        } catch (e) {
+          scheduleReconnect();
+          return;
+        }
+
+        ws.onopen = function() {
+          reconnectDelay = 1000;
+          setStatus('streaming', 'Streaming');
+          acquireWakeLock();
+          startFrameCapture();
+        };
+
+        ws.onclose = function(e) {
+          stopFrameCapture();
+          if (e.code === 1008) {
+            // Auth error: do not auto-reconnect
+            isStreamingIntent = false;
+            releaseWakeLock();
+            setStatus('disconnected', 'Disconnected (Auth Failed)');
+            authError.textContent = '🔒 Authentication Failed (Code 1008): ' + (e.reason || 'Invalid or missing mobile token');
+            authError.style.display = 'block';
+            updateButtonState();
+          } else {
+            setStatus('disconnected', 'Disconnected');
+            if (isStreamingIntent) {
+              scheduleReconnect();
+            }
+          }
+        };
+
+        ws.onerror = function(err) {
+          console.error('WebSocket connection error:', err);
+        };
+      }
+
+      function scheduleReconnect() {
+        if (!isStreamingIntent) return;
+        setStatus('connecting', `Reconnecting in ${Math.round(reconnectDelay/1000)}s...`);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+          if (isStreamingIntent) {
+            connectWebSocket();
+          }
+        }, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.8, 10000);
+      }
+
+      function startFrameCapture() {
+        stopFrameCapture();
+        canvasEl.width = 640;
+        canvasEl.height = 480;
+
+        const targetFps = parseInt(fpsSelect.value, 10) || 10;
+        const intervalMs = Math.round(1000 / targetFps);
+
+        frameTimer = setInterval(() => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          if (videoEl.readyState < videoEl.HAVE_CURRENT_DATA) return;
+
+          ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+          canvasEl.toBlob((blob) => {
+            if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+            blob.arrayBuffer().then((buffer) => {
+              // Frame size hardening check <= 500 KB
+              if (buffer.byteLength <= 500 * 1024) {
+                ws.send(buffer);
+                frameCount++;
+                framesInSec++;
+                framesCounter.textContent = `${frameCount} frames`;
+              }
+            });
+          }, 'image/jpeg', 0.70);
+
+          const now = Date.now();
+          if (now - lastFpsTime >= 1000) {
+            fpsCounter.textContent = `${framesInSec} FPS`;
+            framesInSec = 0;
+            lastFpsTime = now;
+          }
+        }, intervalMs);
+      }
+
+      function stopFrameCapture() {
+        if (frameTimer) {
+          clearInterval(frameTimer);
+          frameTimer = null;
+        }
+      }
+
+      function stopStreaming() {
+        isStreamingIntent = false;
+        stopFrameCapture();
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        if (ws) {
+          try { ws.close(); } catch(e) {}
+          ws = null;
+        }
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        }
+        releaseWakeLock();
+        setStatus('disconnected', 'Disconnected');
+        fpsCounter.textContent = '0 FPS';
+        updateButtonState();
+      }
+
+      function updateButtonState() {
+        if (isStreamingIntent) {
+          toggleBtn.innerHTML = '<span>⏹️ Stop Camera Stream</span>';
+          toggleBtn.className = 'btn stop';
+        } else {
+          toggleBtn.innerHTML = '<span>📹 Start Camera Stream</span>';
+          toggleBtn.className = 'btn';
+        }
+      }
+
+      toggleBtn.addEventListener('click', async () => {
+        if (isStreamingIntent) {
+          stopStreaming();
+        } else {
+          try {
+            toggleBtn.disabled = true;
+            isStreamingIntent = true;
+            updateButtonState();
+            await startCamera();
+            connectWebSocket();
+          } catch(err) {
+            isStreamingIntent = false;
+            updateButtonState();
+            console.error(err);
+          } finally {
+            toggleBtn.disabled = false;
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
