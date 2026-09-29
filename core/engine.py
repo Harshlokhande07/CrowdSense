@@ -38,10 +38,10 @@ from core.alerts import AlertManager
 logger = logging.getLogger("CrowdSense.Engine")
 
 class CrowdEngine:
-    def __init__(self, video_src: str = VIDEO_SRC, demo_mode: bool = DEMO_MODE):
+    def __init__(self, video_src: str = VIDEO_SRC, demo_mode: bool = DEMO_MODE, start_worker: bool = True):
         self.video_src = video_src
         self.demo_mode = demo_mode
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Initialize sub-modules
         self.detector = PersonDetector(model_path=MODEL_PATH, conf_threshold=CONF_THRESHOLD)
@@ -73,7 +73,7 @@ class CrowdEngine:
         # Engine state & telemetry
         self.latest_frame: Optional[np.ndarray] = None
         self.latest_processed_frame: Optional[np.ndarray] = None
-        self.latest_state: Dict[str, Any] = {}
+        self.latest_state: Dict[str, Any] = self._get_default_state()
 
         self.prev_time = time.time()
 
@@ -84,7 +84,95 @@ class CrowdEngine:
         # Worker thread control
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
-        self._start_worker_thread()
+        if start_worker:
+            self._start_worker_thread()
+
+    def _get_default_state(self) -> Dict[str, Any]:
+        """Generates an initial default state schema ensuring all required keys are always present."""
+        now = time.time()
+        notifications_status = self.alert_manager.get_system_notifications_status()
+        source_info = {
+            "mode": self.source_mode,
+            "display_name": self.display_filename,
+            "video_fps": round(self.video_fps, 1),
+            "processing_fps": round(self.current_fps, 1),
+            "dropped_frames": self.dropped_frames,
+            "frame_position_sec": round(self.frame_position_sec, 2)
+        }
+        empty_grid = [[0] * GRID_SIZE for _ in range(GRID_SIZE)]
+        empty_zones = []
+        for z in ZONES_CONFIG:
+            empty_zones.append({
+                "id": z["id"],
+                "name": z["name"],
+                "count": 0,
+                "density_avg": 0.0,
+                "density_per_m2": 0.0,
+                "max_cell_count": 0,
+                "level": "NORMAL",
+                "movement": "STAGNANT",
+                "risk_score": 0,
+                "reasons": ["Normal flow conditions"],
+                "prediction": {
+                    "predicted_count": 0,
+                    "predicted_level": "NORMAL",
+                    "confidence": "Low confidence (<15 samples)",
+                    "trend": "STABLE",
+                    "horizon_s": 30,
+                    "low_confidence": True,
+                    "time_to_threshold_sec": None,
+                    "forecast_message": None,
+                    "disclaimer": "Requires human verification"
+                },
+                "forecast": {
+                    "predicted_count": 0,
+                    "predicted_level": "NORMAL",
+                    "confidence": "Low confidence",
+                    "trend": "STABLE",
+                    "low_confidence": True,
+                    "time_to_threshold_sec": None,
+                    "message": None,
+                    "horizon_s": 30
+                }
+            })
+
+        return {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "system": {
+                "camera": self.camera_status,
+                "model": "YOLOv8n",
+                "database": notifications_status["database"],
+                "fps": round(self.current_fps, 1),
+                "demo_mode": self.demo_mode,
+                "source": source_info
+            },
+            "people_count": 0,
+            "density": {
+                "avg": 0.0,
+                "avg_density_per_m2": 0.0,
+                "max": 0,
+                "max_density_per_m2": 0.0,
+                "level": "NORMAL",
+                "hot_cells": 0
+            },
+            "risk": {
+                "level": "NORMAL",
+                "score": 0
+            },
+            "grid": empty_grid,
+            "zones": empty_zones,
+            "movement": {
+                "direction": "STATIONARY",
+                "avg_speed": 0.0,
+                "status": "STAGNANT",
+                "opposing_flow": False
+            },
+            "bottlenecks": [],
+            "source": source_info,
+            "alerts_active": [],
+            "alerts_history": [],
+            "notifications": notifications_status
+        }
 
     def reset_state(self):
         """Resets tracker, grid density EMA, movement history, trend history, and active incidents on source switch."""
@@ -99,6 +187,9 @@ class CrowdEngine:
         self.sim_tracks.clear()
         self.dropped_frames = 0
         self.frame_position_sec = 0.0
+        with self.lock:
+            self.latest_state = self._get_default_state()
+
 
     def _start_worker_thread(self):
         self._stop_worker_thread()
@@ -413,9 +504,9 @@ class CrowdEngine:
             density_data["zones"], movement_zone_data, now
         )
 
-        # 6. Short-Term Trend Estimation
+        # 6. Short-Term Trend Estimation (Passing bottlenecks for risk score forecasting)
         predictions = self.trend_estimator.predict_all_zones(
-            density_data["zones"], now, horizon_s=30.0
+            density_data["zones"], now, horizon_s=30.0, bottlenecks=bottlenecks
         )
 
         bn_map = {b["zone_id"]: b for b in bottlenecks}
@@ -433,6 +524,7 @@ class CrowdEngine:
                 "name": z["name"],
                 "count": z["count"],
                 "density_avg": z["density_avg"],
+                "density_per_m2": z.get("density_per_m2", z["density_avg"]),
                 "max_cell_count": z["max_cell_count"],
                 "level": z["level"],
                 "movement": m_data.get("movement_status", "STAGNANT"),
@@ -444,7 +536,20 @@ class CrowdEngine:
                     "confidence": p_data.get("confidence", "Low confidence"),
                     "trend": p_data.get("trend", "STABLE"),
                     "horizon_s": 30,
+                    "low_confidence": p_data.get("low_confidence", True),
+                    "time_to_threshold_sec": p_data.get("time_to_threshold_sec"),
+                    "forecast_message": p_data.get("forecast_message"),
                     "disclaimer": "Requires human verification"
+                },
+                "forecast": {
+                    "predicted_count": p_data.get("predicted_count", z["count"]),
+                    "predicted_level": p_data.get("predicted_level", z["level"]),
+                    "confidence": p_data.get("confidence", "Low confidence"),
+                    "trend": p_data.get("trend", "STABLE"),
+                    "low_confidence": p_data.get("low_confidence", True),
+                    "time_to_threshold_sec": p_data.get("time_to_threshold_sec"),
+                    "message": p_data.get("forecast_message"),
+                    "horizon_s": 30
                 }
             })
 
@@ -488,7 +593,9 @@ class CrowdEngine:
                 "people_count": density_data["total_people"],
                 "density": {
                     "avg": density_data["avg_density"],
+                    "avg_density_per_m2": density_data.get("avg_density_per_m2", 0.0),
                     "max": density_data["max_density"],
+                    "max_density_per_m2": density_data.get("max_density_per_m2", 0.0),
                     "level": density_data["overall_level"],
                     "hot_cells": density_data["hot_cells_count"]
                 },
