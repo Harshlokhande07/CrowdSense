@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  crowdsense:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crowdsense_server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - VIDEO_SRC=crowd.mp4
+      - MODEL_PATH=yolov8n.pt
+      - DEMO_MODE=false
+      - NTFY_TOPIC=crowdsense_demo_alerts
+      - ENABLE_MOBILE_ALERT=true
+    volumes:
+      - ./scratch:/app/scratch
+      - ./results:/app/results
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
