@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from typing import Tuple, List, Dict, Any
 
-from core.config import GRID_SIZE, DENSITY_NORMAL_MAX, DENSITY_ELEVATED_MAX, DENSITY_HIGH_MAX
+from core.config import GRID_SIZE, get_density_thresholds
 
 # Standard BGR Color Palette
 COLOR_LOW      = (0, 200, 0)      # Green (NORMAL)
@@ -17,9 +17,14 @@ COLOR_CRITICAL = (0, 0, 255)      # Red (CRITICAL)
 COLOR_GRID     = (255, 255, 255)  # White
 
 class HeatmapVisualizer:
-    def __init__(self, grid_size: int = GRID_SIZE, alpha: float = 0.35):
+    def __init__(self, grid_size: int = GRID_SIZE, alpha: float = 0.35, demo_mode: bool = False):
         self.grid_size = grid_size
         self.alpha = alpha
+        self.demo_mode = demo_mode
+
+    def set_demo_mode(self, demo_mode: bool):
+        """Updates active demo mode threshold profile."""
+        self.demo_mode = demo_mode
 
     def draw_heatmap(self, frame: np.ndarray, raw_grid: np.ndarray, draw_labels: bool = True) -> np.ndarray:
         """
@@ -34,6 +39,10 @@ class HeatmapVisualizer:
         cell_h = h // self.grid_size
 
         overlay = frame.copy()
+        thresh = get_density_thresholds(self.demo_mode)
+        high_max = thresh["DENSITY_HIGH_MAX"]
+        elev_max = thresh["DENSITY_ELEVATED_MAX"]
+        norm_max = thresh["DENSITY_NORMAL_MAX"]
 
         for gy in range(self.grid_size):
             for gx in range(self.grid_size):
@@ -41,11 +50,11 @@ class HeatmapVisualizer:
                 if count == 0:
                     continue
 
-                if count > DENSITY_HIGH_MAX:
+                if count > high_max:
                     color = COLOR_CRITICAL
-                elif count > DENSITY_ELEVATED_MAX:
+                elif count > elev_max:
                     color = COLOR_HIGH
-                elif count > DENSITY_NORMAL_MAX:
+                elif count > norm_max:
                     color = COLOR_ELEVATED
                 else:
                     color = COLOR_LOW

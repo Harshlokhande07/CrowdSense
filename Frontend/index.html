@@ -63,6 +63,7 @@
 
         <div class="header-right">
           <div class="status-chips">
+            <span class="chip chip-demo-badge hidden" id="chip-demo-badge" style="background: rgba(245, 158, 11, 0.2); color: #F59E0B; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700;">⚡ DEMO THRESHOLDS</span>
             <span class="chip" id="chip-source">Source: Demo Mode</span>
             <span class="chip" id="chip-camera">Camera: --</span>
             <span class="chip" id="chip-model">AI Model: --</span>
@@ -148,13 +149,26 @@
           </div>
         </div>
 
-        <!-- Bottleneck & Zone Ranking Row -->
+        <!-- Bottleneck, Zone Ranking & Floor Plan Row -->
         <div class="row secondary-split">
           <!-- Bottleneck Alert Panel -->
-          <div class="card" style="flex: 1.5;">
+          <div class="card" style="flex: 1.2;">
             <div class="k">Bottleneck & Congestion Detector</div>
             <div id="bottleneck-list" class="bottleneck-container">
               <div class="placeholder-text">No congestion bottlenecks detected. Crowd movement flowing freely.</div>
+            </div>
+          </div>
+
+          <!-- Zone Floor Plan Map Panel -->
+          <div class="card" style="flex: 1;">
+            <div class="card-header">
+              <div class="k">Venue Floor Plan</div>
+              <small class="k-sub">Spatial zone telemetry</small>
+            </div>
+            <div id="venue-floorplan-container" style="display: flex; justify-content: center; align-items: center; padding: 6px 0;">
+              <svg id="venue-floorplan-svg" viewBox="0 0 300 200" style="width: 100%; max-width: 280px; height: auto; background: #0B0F19; border-radius: 6px; border: 1px solid #1E293B;">
+                <!-- Dynamically rendered via script.js -->
+              </svg>
             </div>
           </div>
 

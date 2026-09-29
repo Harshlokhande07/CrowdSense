@@ -58,3 +58,32 @@ def test_opposing_flow_noisy_jitter():
     res = analyzer.detect_opposing_flow(vectors, min_speed=0.01, min_count=4, angle_thresh_deg=120.0)
     assert res is False
 
+def test_movement_labels_empty_and_low_activity():
+    """Empty zones show EMPTY; 1-2 people show LOW ACTIVITY; 3+ evaluated for movement."""
+    analyzer = MovementAnalyzer()
+    zones = [
+        {"id": "ZONE_A", "name": "Zone A", "col_range": (0, 3), "row_range": (0, 3)},
+        {"id": "ZONE_B", "name": "Zone B", "col_range": (4, 7), "row_range": (0, 3)},
+        {"id": "ZONE_C", "name": "Zone C", "col_range": (0, 3), "row_range": (4, 7)},
+    ]
+
+    # ZONE_A has 0 tracks -> EMPTY
+    # ZONE_B has 2 tracks (col 5, row 2) -> LOW ACTIVITY
+    # ZONE_C has 4 tracks (col 1, row 5) with very low speed -> STAGNANT
+    active_tracks = [
+        # Zone B (2 people)
+        {"track_id": 1, "center_bottom": (500, 200), "vx_norm": 0.01, "vy_norm": 0.0, "speed_norm": 0.01},
+        {"track_id": 2, "center_bottom": (520, 210), "vx_norm": 0.01, "vy_norm": 0.0, "speed_norm": 0.01},
+        # Zone C (4 people)
+        {"track_id": 3, "center_bottom": (100, 500), "vx_norm": 0.005, "vy_norm": 0.0, "speed_norm": 0.005},
+        {"track_id": 4, "center_bottom": (110, 510), "vx_norm": 0.005, "vy_norm": 0.0, "speed_norm": 0.005},
+        {"track_id": 5, "center_bottom": (120, 520), "vx_norm": 0.005, "vy_norm": 0.0, "speed_norm": 0.005},
+        {"track_id": 6, "center_bottom": (130, 530), "vx_norm": 0.005, "vy_norm": 0.0, "speed_norm": 0.005},
+    ]
+
+    res = analyzer.analyze_zones_movement(active_tracks, zones, frame_w=800, frame_h=800)
+    assert res["ZONE_A"]["movement_status"] == "EMPTY"
+    assert res["ZONE_B"]["movement_status"] == "LOW ACTIVITY"
+    assert res["ZONE_C"]["movement_status"] == "STAGNANT"
+
+

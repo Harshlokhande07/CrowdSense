@@ -9,20 +9,32 @@ import numpy as np
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict, deque
 
-from core.config import PERSISTENCE_REQUIRED_SEC, DENSITY_ELEVATED_MAX, DENSITY_HIGH_MAX
+from core.config import (
+    PERSISTENCE_REQUIRED_SEC,
+    MIN_ZONE_COUNT_FOR_MOVEMENT,
+    GROWTH_WINDOW_SEC,
+    GROWTH_RATE_RAPID_PER_SEC,
+    GROWTH_RATE_MODERATE_PER_SEC,
+    get_density_thresholds
+)
 
 class BottleneckDetector:
-    def __init__(self, persistence_sec: float = PERSISTENCE_REQUIRED_SEC):
+    def __init__(self, persistence_sec: float = PERSISTENCE_REQUIRED_SEC, demo_mode: bool = False):
         self.persistence_sec = persistence_sec
+        self.demo_mode = demo_mode
         # Zone high-density start times: zone_id -> timestamp float
         self.zone_high_density_start: Dict[str, float] = {}
-        # Zone count history for density growth rate: zone_id -> deque of (timestamp, count)
+        # Zone count history for density growth rate: zone_id -> deque of (timestamp, count, edge_count)
         self.zone_count_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=60))
 
     def reset(self):
         """Resets bottleneck timers and history on source switch."""
         self.zone_high_density_start.clear()
         self.zone_count_history.clear()
+
+    def set_demo_mode(self, demo_mode: bool):
+        """Updates active threshold profile mode."""
+        self.demo_mode = demo_mode
 
     def evaluate_zone(
         self,
@@ -41,41 +53,61 @@ class BottleneckDetector:
 
         avg_speed = movement_data.get("avg_speed", 0.0)
         opposing_flow = movement_data.get("opposing_flow", False)
+        edge_count = movement_data.get("edge_count", 0)
+
+        # Active threshold profile
+        thresh = get_density_thresholds(self.demo_mode)
+        elev_max = thresh["DENSITY_ELEVATED_MAX"]
+        crit_cell_thresh = thresh["CRITICAL_CELL_CONCENTRATION"]
+        high_cell_thresh = 3 if self.demo_mode else 5
+        elev_cell_thresh = 2 if self.demo_mode else 3
 
         reasons = []
 
         # 1. Density Score (up to 40 pts)
         density_score = 0
-        if max_cell >= 7:  # CRITICAL
+        if max_cell >= crit_cell_thresh:  # CRITICAL
             density_score = 40
             reasons.append(f"Critical cell density ({max_cell} people in single cell)")
-        elif max_cell >= 5:  # HIGH
+        elif max_cell >= high_cell_thresh:  # HIGH
             density_score = 30
             reasons.append(f"High cell density ({max_cell} people in cell)")
-        elif max_cell >= 3:  # ELEVATED
+        elif max_cell >= elev_cell_thresh:  # ELEVATED
             density_score = 15
             reasons.append(f"Elevated cell density ({max_cell} people in cell)")
 
         # 2. Accumulation Trend / Growth Rate Score (up to 20 pts)
+        # Consistent units: people/s. Smoothed over a window of at least GROWTH_WINDOW_SEC (5s).
+        # Ignores boundary count changes caused by people entering/leaving frame edge.
         history = self.zone_count_history[z_id]
-        history.append((now, count))
+        history.append((now, count, edge_count))
 
         growth_score = 0
-        if len(history) >= 5:
-            t_old, count_old = history[0]
-            dt = max(now - t_old, 1e-3)
-            rate_per_min = (count - count_old) / dt * 60.0
+        target_record = None
+        for t_hist, c_hist, e_hist in history:
+            if (now - t_hist) >= GROWTH_WINDOW_SEC:
+                target_record = (t_hist, c_hist, e_hist)
+                break
 
-            if rate_per_min > 5.0 and count > DENSITY_ELEVATED_MAX:
+        if target_record is not None:
+            t_old, count_old, edge_old = target_record
+            dt = max(now - t_old, 1e-3)
+            edge_delta = edge_count - edge_old
+            total_delta = count - count_old
+            internal_delta = max(total_delta - edge_delta, 0)
+            rate_per_sec = internal_delta / dt
+
+            if rate_per_sec >= GROWTH_RATE_RAPID_PER_SEC and count > elev_max:
                 growth_score = 20
-                reasons.append(f"Rapid accumulation (+{int(rate_per_min)} people/min)")
-            elif rate_per_min > 2.0 and count > DENSITY_ELEVATED_MAX:
+                reasons.append(f"Rapid accumulation (+{rate_per_sec:.1f} people/s)")
+            elif rate_per_sec >= GROWTH_RATE_MODERATE_PER_SEC and count > elev_max:
                 growth_score = 10
-                reasons.append(f"Accumulating count (+{int(rate_per_min)} people/min)")
+                reasons.append(f"Accumulating count (+{rate_per_sec:.1f} people/s)")
 
         # 3. Movement / Stagnation Score (up to 20 pts)
+        # Stagnation is evaluated ONLY when zone has >= MIN_ZONE_COUNT_FOR_MOVEMENT (default 3)
         speed_score = 0
-        if count >= DENSITY_ELEVATED_MAX:
+        if count >= MIN_ZONE_COUNT_FOR_MOVEMENT and count >= elev_max:
             if avg_speed < 0.02:
                 speed_score = 20
                 reasons.append("Stagnant movement speed (<0.02 %/s)")
@@ -93,7 +125,7 @@ class BottleneckDetector:
         persistence_score = 0
         duration = 0.0
 
-        if max_cell >= DENSITY_ELEVATED_MAX:
+        if max_cell >= elev_cell_thresh:
             if z_id not in self.zone_high_density_start:
                 self.zone_high_density_start[z_id] = now
             duration = now - self.zone_high_density_start[z_id]
@@ -113,12 +145,19 @@ class BottleneckDetector:
             100
         )
 
-        # Determine bottleneck state
+        # CRITICAL Override: When max single-cell count >= crit_cell_thresh, guarantee minimum score of 85 (CRITICAL)
+        if max_cell >= crit_cell_thresh:
+            total_score = max(total_score, 85)
+            override_msg = f"Critical cell density override ({max_cell} people in single cell)"
+            if override_msg not in reasons and f"Critical cell density ({max_cell} people in single cell)" not in reasons:
+                reasons.append(override_msg)
+
+        # Determine bottleneck state consistently from composite risk score
         is_bottleneck = False
-        if total_score >= 70 and duration >= self.persistence_sec:
+        if total_score >= 70:
             state = "CRITICAL BOTTLENECK"
             is_bottleneck = True
-        elif total_score >= 45 and duration >= self.persistence_sec:
+        elif total_score >= 45:
             state = "POTENTIAL BOTTLENECK"
             is_bottleneck = True
         elif total_score >= 25:

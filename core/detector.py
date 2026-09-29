@@ -9,14 +9,20 @@ import numpy as np
 import cv2
 from typing import Tuple, List, Dict, Any
 
-from core.config import MODEL_PATH, CONF_THRESHOLD, INFERENCE_RESIZE_WIDTH
+from core.config import MODEL_PATH, CONF_THRESHOLD, INFERENCE_RESIZE_WIDTH, YOLO_MODEL, YOLO_IMGSZ
 
 logger = logging.getLogger("CrowdSense.Detector")
 
 class PersonDetector:
-    def __init__(self, model_path: str = MODEL_PATH, conf_threshold: float = CONF_THRESHOLD):
+    def __init__(
+        self,
+        model_path: str = MODEL_PATH,
+        conf_threshold: float = CONF_THRESHOLD,
+        imgsz: int = INFERENCE_RESIZE_WIDTH
+    ):
         self.model_path = model_path
         self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
         self.model = None
         self.status = "UNINITIALIZED"
 
@@ -24,19 +30,13 @@ class PersonDetector:
 
     def _load_model(self):
         """Attempts to load the YOLOv8 model safely."""
-        if not os.path.exists(self.model_path):
-            logger.warning(f"Model file '{self.model_path}' not found on disk.")
-            self.status = "AI MODEL UNAVAILABLE"
-            self.model = None
-            return
-
         try:
             from ultralytics import YOLO
             self.model = YOLO(self.model_path)
             self.status = "READY"
-            logger.info(f"YOLOv8 model successfully loaded from {self.model_path}")
+            logger.info(f"YOLOv8 model successfully loaded from {self.model_path} (Inference imgsz: {self.imgsz})")
         except Exception as e:
-            logger.error(f"Failed to initialize YOLO model: {e}")
+            logger.error(f"Failed to initialize YOLO model '{self.model_path}': {e}")
             self.status = "AI MODEL UNAVAILABLE"
             self.model = None
 
@@ -63,10 +63,10 @@ class PersonDetector:
             h_orig, w_orig = frame.shape[:2]
             
             # Optional resize for fast inference
-            if INFERENCE_RESIZE_WIDTH > 0 and w_orig > INFERENCE_RESIZE_WIDTH:
-                scale = INFERENCE_RESIZE_WIDTH / float(w_orig)
+            if self.imgsz > 0 and w_orig > self.imgsz:
+                scale = self.imgsz / float(w_orig)
                 target_h = int(h_orig * scale)
-                resized_frame = cv2.resize(frame, (INFERENCE_RESIZE_WIDTH, target_h))
+                resized_frame = cv2.resize(frame, (self.imgsz, target_h))
             else:
                 scale = 1.0
                 resized_frame = frame
@@ -78,6 +78,7 @@ class PersonDetector:
                 tracker="bytetrack.yaml",
                 classes=[0],
                 conf=self.conf_threshold,
+                imgsz=self.imgsz if self.imgsz > 0 else None,
                 verbose=False
             )[0]
 

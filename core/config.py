@@ -20,18 +20,49 @@ CORS_ORIGINS: List[str] = [
 
 # Computer Vision & Detection
 VIDEO_SRC: str = os.getenv("VIDEO_SRC", "crowd.mp4")
-MODEL_PATH: str = os.getenv("MODEL_PATH", "yolov8n.pt")
+YOLO_MODEL: str = os.getenv("YOLO_MODEL", os.getenv("MODEL_PATH", "yolov8n.pt"))
+MODEL_PATH: str = YOLO_MODEL
 CONF_THRESHOLD: float = float(os.getenv("CONF_THRESHOLD", os.getenv("CONFIDENCE_THRESHOLD", "0.35")))
-INFERENCE_RESIZE_WIDTH: int = int(os.getenv("INFERENCE_RESIZE_WIDTH", "640"))
+YOLO_IMGSZ: int = int(os.getenv("YOLO_IMGSZ", os.getenv("INFERENCE_IMGSZ", os.getenv("INFERENCE_RESIZE_WIDTH", "640"))))
+INFERENCE_RESIZE_WIDTH: int = YOLO_IMGSZ
+INFERENCE_IMGSZ: int = YOLO_IMGSZ
 GRID_SIZE: int = int(os.getenv("GRID_SIZE", "8"))
 DEMO_MODE: bool = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 
-# Prototype Risk Thresholds (Cell density person counts)
+# Prototype Risk Threshold Profiles (Cell density person counts)
 # Note: Labelled as prototype risk thresholds. All alerts require human verification.
-DENSITY_NORMAL_MAX: int = int(os.getenv("DENSITY_NORMAL_MAX", "2"))
-DENSITY_ELEVATED_MAX: int = int(os.getenv("DENSITY_ELEVATED_MAX", "4"))
-DENSITY_HIGH_MAX: int = int(os.getenv("DENSITY_HIGH_MAX", "6"))
-# Count >= 7 is CRITICAL
+PROD_DENSITY_THRESHOLDS: Dict[str, int] = {
+    "DENSITY_NORMAL_MAX": int(os.getenv("DENSITY_NORMAL_MAX", "2")),
+    "DENSITY_ELEVATED_MAX": int(os.getenv("DENSITY_ELEVATED_MAX", "4")),
+    "DENSITY_HIGH_MAX": int(os.getenv("DENSITY_HIGH_MAX", "6")),
+    "CRITICAL_CELL_CONCENTRATION": 7
+}
+
+DEMO_DENSITY_THRESHOLDS: Dict[str, int] = {
+    "DENSITY_NORMAL_MAX": 1,
+    "DENSITY_ELEVATED_MAX": 2,
+    "DENSITY_HIGH_MAX": 3,
+    "CRITICAL_CELL_CONCENTRATION": 4
+}
+
+def get_density_thresholds(demo_mode: bool = False) -> Dict[str, int]:
+    """Returns active density threshold profile (DEMO vs PRODUCTION)."""
+    return DEMO_DENSITY_THRESHOLDS if demo_mode else PROD_DENSITY_THRESHOLDS
+
+# Backward-compatible production constants
+DENSITY_NORMAL_MAX: int = PROD_DENSITY_THRESHOLDS["DENSITY_NORMAL_MAX"]
+DENSITY_ELEVATED_MAX: int = PROD_DENSITY_THRESHOLDS["DENSITY_ELEVATED_MAX"]
+DENSITY_HIGH_MAX: int = PROD_DENSITY_THRESHOLDS["DENSITY_HIGH_MAX"]
+CRITICAL_CELL_CONCENTRATION: int = PROD_DENSITY_THRESHOLDS["CRITICAL_CELL_CONCENTRATION"]
+
+# Movement & Stagnation Constraints
+MIN_ZONE_COUNT_FOR_MOVEMENT: int = int(os.getenv("MIN_ZONE_COUNT_FOR_MOVEMENT", "3"))
+
+# Growth Rate & Edge Filtering Parameters
+GROWTH_WINDOW_SEC: float = float(os.getenv("GROWTH_WINDOW_SEC", "5.0"))  # Window of at least 5s
+GROWTH_RATE_RAPID_PER_SEC: float = float(os.getenv("GROWTH_RATE_RAPID_PER_SEC", "0.8"))  # 0.8 people/s
+GROWTH_RATE_MODERATE_PER_SEC: float = float(os.getenv("GROWTH_RATE_MODERATE_PER_SEC", "0.4"))  # 0.4 people/s
+FRAME_EDGE_MARGIN_NORM: float = float(os.getenv("FRAME_EDGE_MARGIN_NORM", "0.06"))  # 6% margin from frame edge
 
 # Zone Definitions (Editable cell-range groupings on 8x8 grid)
 ZONES_CONFIG: List[Dict[str, Any]] = [

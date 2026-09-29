@@ -8,6 +8,7 @@
   const sections = Array.from(document.querySelectorAll('.main-tab'));
   const connBanner = document.getElementById('connection-banner');
 
+  const chipDemoBadge = document.getElementById('chip-demo-badge');
   const chipSource = document.getElementById('chip-source');
   const chipCamera = document.getElementById('chip-camera');
   const chipModel = document.getElementById('chip-model');
@@ -54,6 +55,10 @@
       } else {
         chipSource.textContent = `Source: Demo Mode`;
       }
+    }
+
+    if (chipDemoBadge) {
+      chipDemoBadge.classList.toggle('hidden', mode !== 'demo');
     }
 
     if (btnSrcDemo) btnSrcDemo.classList.toggle('active', mode === 'demo');
@@ -226,6 +231,10 @@
     const vidFps = src.video_fps !== undefined ? src.video_fps.toFixed(1) : '--';
     const dropped = src.dropped_frames || 0;
 
+    if (chipDemoBadge) {
+      chipDemoBadge.classList.toggle('hidden', !(sys.demo_thresholds || sys.demo_mode || src.mode === 'demo'));
+    }
+
     if (chipCamera) chipCamera.textContent = `Camera: ${camStatus}`;
     if (chipModel) chipModel.textContent = `AI Model: ${modelStatus}`;
     if (chipDb) chipDb.textContent = `Database: ${dbStatus}`;
@@ -279,6 +288,12 @@
     renderBottlenecks(bottleneckList, data.bottlenecks || []);
     renderZoneRankings(zoneRankingList, data.zones || []);
 
+    // 6b. Venue Floor Plan SVG Map
+    const floorPlanEl = document.getElementById('venue-floorplan-svg');
+    if (floorPlanEl) {
+      renderFloorPlan(floorPlanEl, data.zones || []);
+    }
+
     // 7. Active Incidents & History
     renderActiveIncidents(activeIncidentsList, activeAlerts);
     renderAlertsHistory(alertsHistoryList, data.alerts_history || []);
@@ -288,6 +303,76 @@
 
     // 9. Trend Chart SVG (Tab #t2)
     renderTrendSVG(trendSvg, trendLegend, trendDetails, data);
+  }
+
+  // Render Venue Floor Plan SVG
+  function renderFloorPlan(svg, zones) {
+    if (!svg) return;
+    clearElement(svg);
+
+    const ns = 'http://www.w3.org/2000/svg';
+    const zoneMap = {};
+    zones.forEach(z => { zoneMap[z.id] = z; });
+
+    const sectorDefs = [
+      { id: 'ZONE_A', name: 'Gate 3 Entry (NW)', x: 10, y: 10, w: 135, h: 85 },
+      { id: 'ZONE_B', name: 'Main Concourse (NE)', x: 155, y: 10, w: 135, h: 85 },
+      { id: 'ZONE_C', name: 'East Lane Merge (SW)', x: 10, y: 105, w: 135, h: 85 },
+      { id: 'ZONE_D', name: 'West Exit Area (SE)', x: 155, y: 105, w: 135, h: 85 }
+    ];
+
+    const getLvlColor = (lvl) => {
+      if (lvl === 'CRITICAL') return { fill: '#7F1D1D', stroke: '#EF4444' };
+      if (lvl === 'HIGH') return { fill: '#7C2D12', stroke: '#F97316' };
+      if (lvl === 'WARNING' || lvl === 'ELEVATED') return { fill: '#78350F', stroke: '#F59E0B' };
+      return { fill: '#064E3B', stroke: '#10B981' };
+    };
+
+    sectorDefs.forEach(sec => {
+      const zData = zoneMap[sec.id] || {};
+      const lvl = zData.level || 'NORMAL';
+      const colors = getLvlColor(lvl);
+
+      const rect = document.createElementNS(ns, 'rect');
+      rect.setAttribute('x', sec.x);
+      rect.setAttribute('y', sec.y);
+      rect.setAttribute('width', sec.w);
+      rect.setAttribute('height', sec.h);
+      rect.setAttribute('rx', '6');
+      rect.setAttribute('fill', colors.fill);
+      rect.setAttribute('stroke', colors.stroke);
+      rect.setAttribute('stroke-width', '2');
+      rect.setAttribute('opacity', '0.9');
+      svg.appendChild(rect);
+
+      const title = document.createElementNS(ns, 'text');
+      title.setAttribute('x', sec.x + 10);
+      title.setAttribute('y', sec.y + 22);
+      title.setAttribute('fill', '#FFFFFF');
+      title.setAttribute('font-size', '11');
+      title.setAttribute('font-weight', '700');
+      title.textContent = zData.name || sec.name;
+      svg.appendChild(title);
+
+      const countText = document.createElementNS(ns, 'text');
+      countText.setAttribute('x', sec.x + 10);
+      countText.setAttribute('y', sec.y + 44);
+      countText.setAttribute('fill', '#E2E8F0');
+      countText.setAttribute('font-size', '13');
+      countText.setAttribute('font-weight', '800');
+      const pM2 = zData.density_per_m2 !== undefined ? `${zData.density_per_m2} p/m²` : '';
+      countText.textContent = `${zData.count || 0} people ${pM2 ? '· ' + pM2 : ''}`;
+      svg.appendChild(countText);
+
+      const badgeText = document.createElementNS(ns, 'text');
+      badgeText.setAttribute('x', sec.x + 10);
+      badgeText.setAttribute('y', sec.y + 68);
+      badgeText.setAttribute('fill', colors.stroke);
+      badgeText.setAttribute('font-size', '11');
+      badgeText.setAttribute('font-weight', '700');
+      badgeText.textContent = `● ${lvl} (${zData.movement || 'FLOW'})`;
+      svg.appendChild(badgeText);
+    });
   }
 
   // Helper to safely clear container
@@ -530,14 +615,43 @@
         card.appendChild(ackInfo);
       }
 
-      // Suggested action
-      const action = document.createElement('div');
-      action.style.color = '#38BDF8';
-      action.style.fontWeight = '600';
-      action.style.fontSize = '14px';
-      action.style.marginTop = '6px';
-      action.textContent = `Suggested action (requires human verification): ${inc.action_recommended || 'Monitor feed.'}`;
-      card.appendChild(action);
+      // Suggested action & Action Playbook
+      const actionBox = document.createElement('div');
+      actionBox.style.marginTop = '8px';
+      actionBox.style.padding = '8px 12px';
+      actionBox.style.background = '#0F172A';
+      actionBox.style.borderRadius = '6px';
+      actionBox.style.border = '1px solid #1E293B';
+
+      const actionTitle = document.createElement('div');
+      actionTitle.style.color = '#38BDF8';
+      actionTitle.style.fontWeight = '700';
+      actionTitle.style.fontSize = '13px';
+      actionTitle.textContent = '⚡ Recommended Operator Playbook (Human Verification Required):';
+      actionBox.appendChild(actionTitle);
+
+      if (inc.recommended_actions && inc.recommended_actions.length > 0) {
+        const actionList = document.createElement('ul');
+        actionList.style.margin = '4px 0 0 16px';
+        actionList.style.padding = '0';
+        actionList.style.fontSize = '12px';
+        actionList.style.color = '#E2E8F0';
+        inc.recommended_actions.forEach(act => {
+          const li = document.createElement('li');
+          li.style.marginTop = '2px';
+          li.textContent = act;
+          actionList.appendChild(li);
+        });
+        actionBox.appendChild(actionList);
+      } else {
+        const actionText = document.createElement('div');
+        actionText.style.color = '#E2E8F0';
+        actionText.style.fontSize = '12px';
+        actionText.style.marginTop = '2px';
+        actionText.textContent = inc.action_recommended || 'Maintain continuous visual monitoring.';
+        actionBox.appendChild(actionText);
+      }
+      card.appendChild(actionBox);
 
       // Operator action controls
       const formBox = document.createElement('div');
@@ -1007,17 +1121,30 @@
       dot.setAttribute('fill', color);
       svg.appendChild(dot);
 
+      const pred = z.prediction || {};
+      const fcast = z.forecast || {};
+      const isLowConf = pred.low_confidence || fcast.low_confidence || (pred.confidence_score !== undefined && pred.confidence_score < 0.3);
+      const forecastMsg = fcast.message || pred.forecast_message || (fcast.time_to_threshold_sec ? `Reaches threshold in ~${fcast.time_to_threshold_sec}s` : null);
+
       if (legendEl) {
         const item = document.createElement('div');
         item.className = 'trend-legend-item';
+        if (isLowConf) {
+          item.style.opacity = '0.6';
+        }
 
         const swatch = document.createElement('div');
         swatch.className = 'trend-legend-swatch';
-        swatch.style.backgroundColor = color;
+        swatch.style.backgroundColor = isLowConf ? '#64748B' : color;
 
         const text = document.createElement('span');
-        const pred = z.prediction || {};
-        text.textContent = `${z.name || zId}: ${z.count || 0} → ${pred.predicted_count !== undefined ? pred.predicted_count : z.count} p (${pred.confidence || 'Low confidence'})`;
+        let legTxt = `${z.name || zId}: ${z.count || 0} → ${pred.predicted_count !== undefined ? pred.predicted_count : z.count} p`;
+        if (isLowConf) {
+          legTxt += ' [Low Confidence]';
+        } else if (forecastMsg) {
+          legTxt += ` (${forecastMsg})`;
+        }
+        text.textContent = legTxt;
 
         item.appendChild(swatch);
         item.appendChild(text);
@@ -1025,17 +1152,24 @@
       }
 
       if (detailsEl) {
-        const pred = z.prediction || {};
         const row = document.createElement('div');
         row.className = 'trend-detail-row';
+        if (isLowConf) {
+          row.style.opacity = '0.7';
+          row.style.background = '#0B0F19';
+        }
 
         const left = document.createElement('div');
         left.style.fontWeight = '700';
-        left.style.color = color;
-        left.textContent = `${z.name || zId}`;
+        left.style.color = isLowConf ? '#94A3B8' : color;
+        left.textContent = `${z.name || zId}${isLowConf ? ' (High Noise / Low Confidence)' : ''}`;
 
         const right = document.createElement('div');
-        right.textContent = `Current: ${z.count || 0} p | Predicted (+30s): ${pred.predicted_count !== undefined ? pred.predicted_count : z.count} p | Confidence: ${pred.confidence || 'Low confidence'} | Trend: ${pred.trend || 'STABLE'}`;
+        let detailsText = `Current: ${z.count || 0} p | Predicted (+30s): ${pred.predicted_count !== undefined ? pred.predicted_count : z.count} p | Confidence: ${pred.confidence || 'Low confidence'} | Trend: ${pred.trend || 'STABLE'}`;
+        if (forecastMsg) {
+          detailsText += ` | ⏳ Proactive Notice: ${forecastMsg}`;
+        }
+        right.textContent = detailsText;
 
         row.appendChild(left);
         row.appendChild(right);

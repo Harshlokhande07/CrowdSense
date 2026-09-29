@@ -45,10 +45,10 @@ class CrowdEngine:
 
         # Initialize sub-modules
         self.detector = PersonDetector(model_path=MODEL_PATH, conf_threshold=CONF_THRESHOLD)
-        self.grid_analyzer = GridDensityAnalyzer(grid_size=GRID_SIZE)
-        self.heatmap_visualizer = HeatmapVisualizer(grid_size=GRID_SIZE)
+        self.grid_analyzer = GridDensityAnalyzer(grid_size=GRID_SIZE, demo_mode=demo_mode)
+        self.heatmap_visualizer = HeatmapVisualizer(grid_size=GRID_SIZE, demo_mode=demo_mode)
         self.movement_analyzer = MovementAnalyzer()
-        self.bottleneck_detector = BottleneckDetector()
+        self.bottleneck_detector = BottleneckDetector(demo_mode=demo_mode)
         self.trend_estimator = TrendEstimator()
         self.alert_manager = AlertManager()
 
@@ -110,7 +110,7 @@ class CrowdEngine:
                 "density_per_m2": 0.0,
                 "max_cell_count": 0,
                 "level": "NORMAL",
-                "movement": "STAGNANT",
+                "movement": "EMPTY",
                 "risk_score": 0,
                 "reasons": ["Normal flow conditions"],
                 "prediction": {
@@ -250,6 +250,11 @@ class CrowdEngine:
                 if file_path:
                     self.uploaded_file_path = file_path
                 self._init_camera()
+
+            # Update threshold profile modes across active analyzers
+            self.grid_analyzer.set_demo_mode(self.demo_mode)
+            self.heatmap_visualizer.set_demo_mode(self.demo_mode)
+            self.bottleneck_detector.set_demo_mode(self.demo_mode)
 
             self.reset_state()
 
@@ -588,6 +593,8 @@ class CrowdEngine:
                     "database": notifications_status["database"],
                     "fps": round(self.current_fps, 1),
                     "demo_mode": self.demo_mode,
+                    "demo_thresholds": self.demo_mode,
+                    "threshold_profile": "DEMO (Critical >= 4)" if self.demo_mode else "PRODUCTION (Critical >= 7)",
                     "source": source_info
                 },
                 "people_count": density_data["total_people"],

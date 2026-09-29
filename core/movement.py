@@ -9,6 +9,14 @@ import numpy as np
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict, deque
 
+from core.config import (
+    OPPOSING_FLOW_MIN_SPEED,
+    OPPOSING_FLOW_MIN_COUNT,
+    OPPOSING_FLOW_ANGLE_DEG,
+    MIN_ZONE_COUNT_FOR_MOVEMENT,
+    FRAME_EDGE_MARGIN_NORM
+)
+
 class MovementAnalyzer:
     def __init__(self, history_seconds: float = 3.0, default_fps: float = 25.0):
         self.history_seconds = history_seconds
@@ -105,6 +113,79 @@ class MovementAnalyzer:
         else:
             return "E"
 
+    @staticmethod
+    def detect_opposing_flow(
+        moving_vectors: List[Tuple[float, float]],
+        min_speed: float = OPPOSING_FLOW_MIN_SPEED,
+        min_count: int = OPPOSING_FLOW_MIN_COUNT,
+        angle_thresh_deg: float = OPPOSING_FLOW_ANGLE_DEG
+    ) -> bool:
+        """
+        Detects opposing flows by clustering 2D unit direction vectors into 2 angular groups.
+        Flags opposing_flow when each group holds >= 25% of vectors (and >= min_count/2 each)
+        and the angle between group mean directions is > angle_thresh_deg (default 120 deg).
+        """
+        # Filter vectors below min_speed
+        valid_vecs = []
+        for vx, vy in moving_vectors:
+            spd = math.sqrt(vx ** 2 + vy ** 2)
+            if spd >= min_speed:
+                valid_vecs.append((vx / spd, vy / spd))
+
+        total_valid = len(valid_vecs)
+        if total_valid < min_count:
+            return False
+
+        # Cluster unit vectors into 2 angular direction groups
+        # Seed 1: first vector
+        c1 = valid_vecs[0]
+        # Seed 2: vector with lowest dot product (most divergent) from seed 1
+        dot_products = [c1[0] * v[0] + c1[1] * v[1] for v in valid_vecs]
+        min_idx = int(np.argmin(dot_products))
+        c2 = valid_vecs[min_idx]
+
+        # 2-means clustering on unit circle (3 iterations is sufficient for convergence)
+        for _ in range(3):
+            g1, g2 = [], []
+            for v in valid_vecs:
+                dot1 = c1[0] * v[0] + c1[1] * v[1]
+                dot2 = c2[0] * v[0] + c2[1] * v[1]
+                if dot1 >= dot2:
+                    g1.append(v)
+                else:
+                    g2.append(v)
+
+            if not g1 or not g2:
+                return False
+
+            # Recompute cluster centers
+            sum_x1 = sum(v[0] for v in g1)
+            sum_y1 = sum(v[1] for v in g1)
+            norm1 = math.sqrt(sum_x1 ** 2 + sum_y1 ** 2)
+            if norm1 > 1e-6:
+                c1 = (sum_x1 / norm1, sum_y1 / norm1)
+
+            sum_x2 = sum(v[0] for v in g2)
+            sum_y2 = sum(v[1] for v in g2)
+            norm2 = math.sqrt(sum_x2 ** 2 + sum_y2 ** 2)
+            if norm2 > 1e-6:
+                c2 = (sum_x2 / norm2, sum_y2 / norm2)
+
+        # Check conditions:
+        # 1. Group size ratios >= 25% of total moving vectors
+        # 2. Minimum counts in each group
+        if (len(g1) / float(total_valid) < 0.25) or (len(g2) / float(total_valid) < 0.25):
+            return False
+        if len(g1) < 2 or len(g2) < 2:
+            return False
+
+        # 3. Angle between group mean directions > angle_thresh_deg
+        mean_dot = c1[0] * c2[0] + c1[1] * c2[1]
+        clamped_dot = max(min(mean_dot, 1.0), -1.0)
+        separation_angle_deg = math.degrees(math.acos(clamped_dot))
+
+        return separation_angle_deg > angle_thresh_deg
+
     def analyze_zones_movement(
         self,
         active_tracks: List[Dict[str, Any]],
@@ -114,8 +195,6 @@ class MovementAnalyzer:
     ) -> Dict[str, Dict[str, Any]]:
         """
         Analyzes zone-level speed, dominant flow direction, and opposing flow.
-        Opposing flow: split vectors by dominant axis into two groups; flag when the smaller group
-        is >25% of total and both groups maintain meaningful speed (>0.02 %/s).
         """
         results = {}
 
@@ -124,8 +203,9 @@ class MovementAnalyzer:
             c_start, c_end = z["col_range"]
             r_start, r_end = z["row_range"]
 
-            # Filter tracks in this zone
+            # Filter tracks in this zone and check edge positioning
             z_tracks = []
+            edge_count = 0
             for t in active_tracks:
                 cx, y2 = t["center_bottom"]
                 col = min(max(int(cx / float(frame_w) * 8), 0), 7)
@@ -133,18 +213,29 @@ class MovementAnalyzer:
 
                 if c_start <= col <= c_end and r_start <= row <= r_end:
                     z_tracks.append(t)
+                    norm_x = t.get("norm_x", cx / float(frame_w))
+                    norm_y = t.get("norm_y", y2 / float(frame_h))
+                    if (
+                        norm_x <= FRAME_EDGE_MARGIN_NORM or
+                        norm_x >= (1.0 - FRAME_EDGE_MARGIN_NORM) or
+                        norm_y <= FRAME_EDGE_MARGIN_NORM or
+                        norm_y >= (1.0 - FRAME_EDGE_MARGIN_NORM)
+                    ):
+                        edge_count += 1
 
-            if not z_tracks:
+            track_count = len(z_tracks)
+            if track_count == 0:
                 results[z_id] = {
                     "avg_speed": 0.0,
-                    "dominant_direction": "STATIONARY",
+                    "dominant_direction": "NONE",
                     "opposing_flow": False,
-                    "movement_status": "STAGNANT",
-                    "surging": False
+                    "movement_status": "EMPTY",
+                    "surging": False,
+                    "edge_count": 0
                 }
                 continue
 
-            moving_tracks = [t for t in z_tracks if t["track_id"] is not None and t["speed_norm"] >= 0.02]
+            moving_tracks = [t for t in z_tracks if t["track_id"] is not None and t["speed_norm"] >= OPPOSING_FLOW_MIN_SPEED]
             speeds = [t["speed_norm"] for t in z_tracks if t["track_id"] is not None]
             avg_speed = float(np.mean(speeds)) if speeds else 0.0
 
@@ -156,28 +247,14 @@ class MovementAnalyzer:
 
             dominant_dir = self.get_cardinal_direction(mean_vx, mean_vy)
 
-            # Opposing Flow via Dominant Axis Vector Splitting:
-            # 1. Determine dominant movement axis (X or Y) from standard deviation or total variance
-            # 2. Split vectors into Positive group vs Negative group along that axis
-            # 3. Check if smaller group > 25% of total moving vectors and both groups have avg speed > 0.02
-            opposing_flow = False
-            if len(moving_tracks) >= 4:
-                std_x = float(np.std(vxs)) if vxs else 0.0
-                std_y = float(np.std(vys)) if vys else 0.0
-
-                dominant_axis_v = vxs if std_x >= std_y else vys
-
-                pos_group = [v for v in dominant_axis_v if v > 0.01]
-                neg_group = [v for v in dominant_axis_v if v < -0.01]
-
-                total_moving = len(moving_tracks)
-                min_group_size = min(len(pos_group), len(neg_group))
-
-                if (min_group_size / float(total_moving)) >= 0.25:
-                    pos_speed = float(np.mean(pos_group)) if pos_group else 0.0
-                    neg_speed = float(np.abs(np.mean(neg_group))) if neg_group else 0.0
-                    if pos_speed > 0.02 and neg_speed > 0.02:
-                        opposing_flow = True
+            # Opposing Flow via Angular Vector Clustering
+            vec_pairs = [(t["vx_norm"], t["vy_norm"]) for t in moving_tracks]
+            opposing_flow = self.detect_opposing_flow(
+                vec_pairs,
+                min_speed=OPPOSING_FLOW_MIN_SPEED,
+                min_count=OPPOSING_FLOW_MIN_COUNT,
+                angle_thresh_deg=OPPOSING_FLOW_ANGLE_DEG
+            )
 
             # Sudden speed surge detection
             speed_hist = self.zone_speed_history[z_id]
@@ -189,7 +266,9 @@ class MovementAnalyzer:
             speed_hist.append(avg_speed)
 
             # Assign Movement Status
-            if opposing_flow:
+            if track_count < MIN_ZONE_COUNT_FOR_MOVEMENT:
+                status = "LOW ACTIVITY"
+            elif opposing_flow:
                 status = "OPPOSING FLOW"
             elif surging:
                 status = "SURGING"
@@ -205,7 +284,9 @@ class MovementAnalyzer:
                 "dominant_direction": dominant_dir,
                 "opposing_flow": opposing_flow,
                 "movement_status": status,
-                "surging": surging
+                "surging": surging,
+                "edge_count": edge_count
             }
 
         return results
+
