@@ -31,3 +31,20 @@ def test_bottleneck_scoring():
     assert res2["score"] >= 70
     assert res2["is_bottleneck"] is True
     assert res2["state"] in ("POTENTIAL BOTTLENECK", "CRITICAL BOTTLENECK")
+
+def test_bottleneck_critical_override():
+    """When max single-cell count >= 7, score must floor at 85 (CRITICAL) with consistent state."""
+    detector = BottleneckDetector(persistence_sec=3.0)
+    zone = {
+        "id": "ZONE_A",
+        "name": "Gate 3",
+        "count": 7,
+        "max_cell_count": 7,
+        "level": "CRITICAL"
+    }
+    movement_data = {"avg_speed": 0.05, "opposing_flow": False}
+    res = detector.evaluate_zone(zone, movement_data, now=100.0)
+    assert res["score"] >= 85
+    assert res["state"] == "CRITICAL BOTTLENECK"
+    assert any("Critical" in r for r in res["reasons"])
+
